@@ -24,7 +24,7 @@ python server.py
 ```text
 DEEPSEEK_API_KEY=your_api_key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-DEEPSEEK_MODEL=deepseek-v4-pro
+DEEPSEEK_MODEL=deepseek-chat
 ```
 
 `public/` 中的文件会作为静态资源发布，后端接口由 Flask app 提供：
