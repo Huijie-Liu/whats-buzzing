@@ -20,6 +20,23 @@ try:
 except ImportError:
     openai = None
 
+try:
+    from flask import (
+        Flask,
+        Response,
+        abort,
+        request,
+        send_from_directory,
+        stream_with_context,
+    )
+except ImportError:
+    Flask = None
+    Response = None
+    abort = None
+    request = None
+    send_from_directory = None
+    stream_with_context = None
+
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC_DIR = ROOT / "public"
@@ -255,7 +272,14 @@ _deepseek_client = openai.OpenAI(
 ) if DEEPSEEK_KEY and openai else None
 
 _translation_cache: dict[str, str] = {}
-TRANSLATION_CACHE_FILE = ROOT / ".translation_cache.json"
+DEFAULT_TRANSLATION_CACHE_FILE = (
+    "/tmp/news-focus-translation-cache.json"
+    if os.environ.get("VERCEL")
+    else str(ROOT / ".translation_cache.json")
+)
+TRANSLATION_CACHE_FILE = Path(
+    os.environ.get("TRANSLATION_CACHE_FILE", DEFAULT_TRANSLATION_CACHE_FILE)
+)
 MAX_CACHE_SIZE = 10000
 
 
@@ -1092,6 +1116,156 @@ def stream_feed(query):
         "updatedAt": iso_now(),
         "errors": errors,
     }, ensure_ascii=False)
+
+
+def api_headers(*, stream=False):
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-cache, no-transform" if stream else "no-store",
+    }
+    if stream:
+        headers["X-Accel-Buffering"] = "no"
+    return headers
+
+
+def cors_preflight_response():
+    return Response(
+        status=204,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        },
+    )
+
+
+def json_response(data, status=200):
+    return Response(
+        json.dumps(data, ensure_ascii=False),
+        status=status,
+        content_type="application/json; charset=utf-8",
+        headers=api_headers(),
+    )
+
+
+def parse_flask_query():
+    return {key: request.args.getlist(key) for key in request.args.keys()}
+
+
+def preview_payload(url):
+    if not url or not url.startswith(("http://", "https://")):
+        return {"error": "invalid url"}, 400
+
+    now = time.time()
+    cached = PREVIEW_CACHE.get(url)
+    if cached and now - cached[0] < PREVIEW_CACHE_TTL:
+        return {"snippet": cached[1]}, 200
+
+    try:
+        raw = fetch_preview_url(url)
+        snippet = extract_snippet(raw)
+    except Exception as exc:
+        snippet = f"[预览不可用] {exc}"
+
+    PREVIEW_CACHE[url] = (now, snippet)
+    return {"snippet": snippet}, 200
+
+
+def create_flask_app():
+    if Flask is None:
+        raise RuntimeError("Flask is required for the Vercel WSGI application")
+
+    flask_app = Flask(__name__, static_folder=None)
+
+    @flask_app.before_request
+    def handle_api_preflight():
+        if request.method == "OPTIONS" and request.path.startswith("/api/"):
+            return cors_preflight_response()
+        return None
+
+    @flask_app.after_request
+    def add_cors_headers(response):
+        response.headers.setdefault("Access-Control-Allow-Origin", "*")
+        return response
+
+    @flask_app.route("/api/<path:_path>", methods=["OPTIONS"])
+    def api_options(_path):
+        return cors_preflight_response()
+
+    @flask_app.route("/api/feed", methods=["GET", "HEAD"])
+    def flask_feed():
+        headers = api_headers(stream=True)
+        if request.method == "HEAD":
+            return Response(
+                status=200,
+                content_type="application/x-ndjson; charset=utf-8",
+                headers=headers,
+            )
+
+        def generate():
+            yield from (line + "\n" for line in stream_feed(parse_flask_query()))
+
+        return Response(
+            stream_with_context(generate()),
+            content_type="application/x-ndjson; charset=utf-8",
+            headers=headers,
+        )
+
+    @flask_app.get("/api/preview")
+    def flask_preview():
+        payload, status = preview_payload(request.args.get("url", ""))
+        return json_response(payload, status=status)
+
+    @flask_app.post("/api/translate")
+    def flask_translate():
+        if (request.content_length or 0) > 1_000_000:
+            return json_response({"error": "request too large"}, status=413)
+
+        payload = request.get_json(silent=True) or {}
+        items = payload.get("items", [])
+        if not isinstance(items, list):
+            return json_response({"error": "Invalid items"}, status=400)
+
+        def generate():
+            clean_items = [item for item in items if isinstance(item, dict)]
+            for event in translation_events(clean_items):
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "complete"}, ensure_ascii=False) + "\n"
+
+        return Response(
+            stream_with_context(generate()),
+            content_type="application/x-ndjson; charset=utf-8",
+            headers=api_headers(stream=True),
+        )
+
+    @flask_app.get("/")
+    def flask_index():
+        return serve_public_file("index.html")
+
+    @flask_app.get("/<path:filename>")
+    def flask_static(filename):
+        return serve_public_file(filename)
+
+    return flask_app
+
+
+def serve_public_file(filename):
+    safe_path = urllib.parse.unquote(filename).lstrip("/") or "index.html"
+    target = (PUBLIC_DIR / safe_path).resolve()
+    if PUBLIC_DIR not in target.parents and target != PUBLIC_DIR:
+        abort(404)
+    if target.is_dir():
+        safe_path = str(Path(safe_path) / "index.html")
+        target = (PUBLIC_DIR / safe_path).resolve()
+    if not target.exists():
+        abort(404)
+
+    response = send_from_directory(PUBLIC_DIR, safe_path)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return response
+
+
+app = create_flask_app() if Flask is not None else None
 
 
 class Handler(BaseHTTPRequestHandler):
