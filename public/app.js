@@ -1,21 +1,21 @@
 const SOURCE_GROUPS = [
-  { key: "breaking", label: "新闻" },
+  { key: "news", label: "新闻" },
+  { key: "hot", label: "热点" },
   { key: "analysis", label: "深度" },
 ];
 
 const SOURCES = [
-  { key: "hn", label: "Hacker News", accent: "#f0652f", group: "breaking" },
-  { key: "reuters", label: "路透社", accent: "#ff8000", group: "breaking" },
-  { key: "bloomberg", label: "彭博社", accent: "#0068ff", group: "breaking" },
-  { key: "google", label: "Google News 美国", accent: "#1a73e8", group: "breaking" },
-  { key: "google_zh", label: "Google News 中文", accent: "#34a853", group: "breaking" },
-  { key: "zhihu", label: "知乎热榜", accent: "#0066ff", group: "analysis" },
+  { key: "reuters", label: "路透社", accent: "#ff8000", group: "news" },
+  { key: "bloomberg", label: "彭博社", accent: "#0068ff", group: "news" },
+  { key: "hn", label: "Hacker News", accent: "#f0652f", group: "hot" },
+  { key: "google", label: "Google News 美国", accent: "#1a73e8", group: "hot" },
+  { key: "google_zh", label: "Google News 中文", accent: "#34a853", group: "hot" },
+  { key: "zhihu", label: "知乎热榜", accent: "#0066ff", group: "hot" },
   { key: "economist", label: "经济学人", accent: "#d71920", group: "analysis" },
   { key: "atlantic", label: "大西洋周刊", accent: "#111111", group: "analysis" },
   { key: "newyorker", label: "纽约客", accent: "#e60000", group: "analysis" },
   { key: "aeon", label: "Aeon 深度", accent: "#c45161", group: "analysis" },
   { key: "mit_tech", label: "MIT 科技评论", accent: "#ff5a00", group: "analysis" },
-  { key: "quanta", label: "Quanta 科学", accent: "#2563eb", group: "analysis" },
 ];
 
 const MAX_ITEMS_PER_TAB = 50;
@@ -43,7 +43,7 @@ let translationRunId = 0;
 
 function initialSourceGroup() {
   const stored = localStorage.getItem("activeSourceGroup");
-  return SOURCE_GROUPS.some((group) => group.key === stored) ? stored : "breaking";
+  return SOURCE_GROUPS.some((group) => group.key === stored) ? stored : "news";
 }
 
 function loadReadIds() {
@@ -63,7 +63,6 @@ const state = {
   sourceCounts: new Map(),
   query: "",
   withImages: localStorage.getItem("displayMode") !== "text",
-  sortMode: localStorage.getItem("sortMode") || "latest",
   theme: localStorage.getItem(THEME_STORAGE_KEY) || "light",
   loading: false,
   readIds: loadReadIds(),
@@ -81,8 +80,6 @@ const els = {
   theme: document.querySelector("#themeButton"),
   imageMode: document.querySelector("#imageMode"),
   textMode: document.querySelector("#textMode"),
-  sortLatest: document.querySelector("#sortLatest"),
-  sortTop: document.querySelector("#sortTop"),
   template: document.querySelector("#articleTemplate"),
 };
 
@@ -127,7 +124,7 @@ function sourceMeta(sourceKey) {
 }
 
 function sourceGroup(sourceKey) {
-  return sourceMeta(sourceKey)?.group || "breaking";
+  return sourceMeta(sourceKey)?.group || "news";
 }
 
 function activeGroupSources() {
@@ -265,14 +262,6 @@ function setMode(withImages) {
   render();
 }
 
-function setSortMode(mode) {
-  state.sortMode = mode === "top" ? "top" : "latest";
-  localStorage.setItem("sortMode", state.sortMode);
-  els.sortLatest.classList.toggle("active", state.sortMode === "latest");
-  els.sortTop.classList.toggle("active", state.sortMode === "top");
-  render();
-}
-
 function isLiveTitle(title) {
   return /^Live\b|^LIVE\b|^\[Live\]|^【直播】|直播\|/.test(title || "");
 }
@@ -328,10 +317,12 @@ function getFilteredItems() {
     return `${item.titleOriginal} ${item.summaryOriginal} ${item.titleZh || ""} ${item.summaryZh || ""} ${item.sourceLabel}`.toLowerCase().includes(query);
   });
 
-  if (state.sortMode === "latest") {
-    results.sort((a, b) => (b.publishedAt || "").localeCompare(a.publishedAt || ""));
-  } else {
+  // 热点 keeps each source's own ranking (server arrival order); the
+  // other groups are sorted newest-first.
+  if (state.activeGroup === "hot") {
     results.sort((a, b) => ((a._seq || 0) - (b._seq || 0)));
+  } else {
+    results.sort((a, b) => (b.publishedAt || "").localeCompare(a.publishedAt || ""));
   }
 
   return results.slice(0, limit);
@@ -641,18 +632,17 @@ function renderFeed() {
   els.feed.replaceChildren();
   if (state.loading && !items.length) {
     els.feed.appendChild(renderSkeleton());
-    return;
-  }
-  if (!items.length) {
+  } else if (!items.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
     empty.textContent = state.query.trim() ? "没有匹配的内容" : "暂无内容，请刷新重试";
     els.feed.append(empty);
-    return;
+  } else {
+    const fragment = document.createDocumentFragment();
+    items.forEach((item) => fragment.append(renderArticle(item)));
+    els.feed.append(fragment);
   }
-  const fragment = document.createDocumentFragment();
-  items.forEach((item) => fragment.append(renderArticle(item)));
-  els.feed.append(fragment);
+  restoreSelection();
 }
 
 function renderErrors(errors = []) {
@@ -742,9 +732,6 @@ els.refresh.addEventListener("click", loadFeed);
 els.theme.addEventListener("click", () => setTheme(state.theme === "dark" ? "light" : "dark"));
 els.imageMode.addEventListener("click", () => setMode(true));
 els.textMode.addEventListener("click", () => setMode(false));
-els.sortLatest.addEventListener("click", () => setSortMode("latest"));
-els.sortTop.addEventListener("click", () => setSortMode("top"));
-
 window.addEventListener("scroll", onScrollTranslate, { passive: true });
 
 const scrollTopBtn = document.createElement("button");
@@ -810,52 +797,116 @@ els.feed.addEventListener("mouseout", (e) => {
 
 window.addEventListener("scroll", removePreview, { passive: true });
 
-let vimStep = 0;
+/* ------------------------------------------------------------------ *
+ *  Keyboard navigation (vim-style)
+ *
+ *  The current selection is tracked by article id (`vim.selectedId`),
+ *  never by a cached DOM node or index. This is the key to being
+ *  bug-free: the feed is rebuilt on nearly every interaction (filter,
+ *  sort, theme, translation, search), so any node/index reference goes
+ *  stale instantly. Resolving the id against the live DOM on each use
+ *  keeps navigation correct across every re-render.
+ * ------------------------------------------------------------------ */
 
-let navIdx = 0;
-let navGlowEl = null;
-let navGlowTimer = null;
+const vim = {
+  selectedId: null,
+  pendingG: false,
+  gTimer: null,
+};
 
-function navGlow(el) {
-  if (navGlowEl && navGlowEl !== el) {
-    navGlowEl.style.boxShadow = "";
-    navGlowEl.style.transition = "";
-  }
-  if (navGlowTimer) clearTimeout(navGlowTimer);
-  navGlowEl = el;
-  el.style.boxShadow = "0 0 0 3px var(--source-color, #191b1f)";
-  el.style.transition = "box-shadow 0.15s ease-in";
+const HEADER_OFFSET = 84;
+
+function feedCards() {
+  return [...els.feed.querySelectorAll(".story")];
 }
 
-function navCard(dir) {
-  const cards = [...els.feed.querySelectorAll(".story")];
+function cardIndexById(cards, id) {
+  return id ? cards.findIndex((node) => node.dataset.itemId === id) : -1;
+}
+
+// First card whose bottom edge is below the sticky header — i.e. the
+// first one actually visible. Used to anchor the very first j/k press.
+function firstCardInView(cards) {
+  for (let i = 0; i < cards.length; i += 1) {
+    if (cards[i].getBoundingClientRect().bottom > HEADER_OFFSET) return i;
+  }
+  return cards.length ? cards.length - 1 : -1;
+}
+
+function paintSelection(node) {
+  els.feed.querySelectorAll(".story.selected").forEach((el) => {
+    if (el !== node) el.classList.remove("selected");
+  });
+  if (node) node.classList.add("selected");
+}
+
+function clearSelection() {
+  vim.selectedId = null;
+  paintSelection(null);
+}
+
+// Re-apply the selection ring after the feed DOM is rebuilt. If the
+// selected article is no longer present (filtered out, source changed),
+// the selection is dropped cleanly.
+function restoreSelection() {
+  if (!vim.selectedId) return;
+  const cards = feedCards();
+  const idx = cardIndexById(cards, vim.selectedId);
+  if (idx === -1) clearSelection();
+  else paintSelection(cards[idx]);
+}
+
+function selectCardAt(index, { scroll = true } = {}) {
+  const cards = feedCards();
+  if (!cards.length) { clearSelection(); return; }
+  const node = cards[Math.min(Math.max(index, 0), cards.length - 1)];
+  vim.selectedId = node.dataset.itemId || null;
+  paintSelection(node);
+  if (!scroll) return;
+  const rect = node.getBoundingClientRect();
+  if (rect.top < HEADER_OFFSET || rect.bottom > window.innerHeight - 16) {
+    node.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+}
+
+function moveSelection(dir) {
+  const cards = feedCards();
   if (!cards.length) return;
-
-  if (navGlowEl) {
-    navIdx = Math.min(Math.max(navIdx + dir, 0), cards.length - 1);
-  } else {
-    navIdx = 0;
-  }
-
-  cards[navIdx].scrollIntoView({ block: "start", behavior: "instant" });
-  navGlow(cards[navIdx]);
+  const current = cardIndexById(cards, vim.selectedId);
+  const next = current === -1 ? firstCardInView(cards) : current + dir;
+  selectCardAt(next);
 }
 
-function navOpen() {
-  const cards = [...els.feed.querySelectorAll(".story")];
-  if (!cards.length || navIdx >= cards.length) return;
-  const link = cards[navIdx].querySelector(".title[href]");
-  if (link) window.open(link.href, "_blank");
+function openSelected() {
+  const cards = feedCards();
+  const idx = cardIndexById(cards, vim.selectedId);
+  if (idx === -1) return;
+  const node = cards[idx];
+  const link = node.querySelector(".title[href]");
+  if (!link || !link.href) return;
+  const item = findItemById(vim.selectedId);
+  if (item) markRead(item, node);
+  window.open(link.href, "_blank", "noopener");
 }
 
-function navSource(dir) {
+function cycleSource(dir) {
   const sources = [{ key: "all" }, ...activeGroupSources()];
-  const idx = sources.findIndex(s => s.key === state.activeSource);
+  const idx = sources.findIndex((s) => s.key === state.activeSource);
   const next = sources[(idx + dir + sources.length) % sources.length];
   state.activeSource = next.key;
   localStorage.setItem("activeSource", next.key);
   render();
   startTranslationsForVisibleItems();
+}
+
+function cycleGroup(dir) {
+  const idx = SOURCE_GROUPS.findIndex((g) => g.key === state.activeGroup);
+  const next = SOURCE_GROUPS[(idx + dir + SOURCE_GROUPS.length) % SOURCE_GROUPS.length];
+  setActiveGroup(next.key);
+}
+
+function isTypingTarget(node) {
+  return !!node && (node.tagName === "INPUT" || node.tagName === "TEXTAREA" || node.isContentEditable);
 }
 
 function toggleHelp() {
@@ -865,57 +916,149 @@ function toggleHelp() {
     ["j / k", "下一篇 / 上一篇"],
     ["Enter", "打开选中文章"],
     ["n / p", "下一个源 / 上一个源"],
-    ["1 / 2", "新闻 / 深度"],
+    ["1 / 2 / 3", "新闻 / 热点 / 深度"],
+    ["[ / ]", "上一组 / 下一组"],
+    ["d / u", "向下 / 向上半页"],
+    ["g g / G", "顶部 / 底部"],
     ["/", "搜索"],
-    ["r", "刷新"],
-    ["s", "最新 / 热门"],
     ["m", "有图 / 无图"],
     ["t", "明暗主题"],
-    ["g g", "回到顶部"],
-    ["G", "跳到底部"],
-    ["d / u", "下半页 / 上半页"],
-    ["?", "显示 / 隐藏此帮助"],
+    ["r", "刷新"],
+    ["Esc", "取消选中 / 关闭"],
+    ["?", "显示 / 隐藏帮助"],
   ];
-  const el = document.createElement("div");
-  el.className = "kbd-help";
-  el.innerHTML = `<div class="kbd-title">Keyboard Shortcuts</div>${rows.map(r => `<div class="kbd-row"><kbd>${r[0]}</kbd><span>${r[1]}</span></div>`).join("")}`;
-  el.addEventListener("click", () => el.remove());
-  document.body.appendChild(el);
+  const overlay = document.createElement("div");
+  overlay.className = "kbd-help";
+  overlay.innerHTML =
+    `<div class="kbd-card">` +
+    `<div class="kbd-title">键盘快捷键</div>` +
+    rows.map((r) => `<div class="kbd-row"><kbd>${r[0]}</kbd><span>${r[1]}</span></div>`).join("") +
+    `</div>`;
+  overlay.addEventListener("click", () => overlay.remove());
+  document.body.appendChild(overlay);
 }
 
 function handleVimKey(e) {
-  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key;
-  if (k === "Escape") { document.activeElement?.blur(); removePreview(); const h = document.querySelector(".kbd-help"); if (h) h.remove(); return; }
-  if (k === "/") { e.preventDefault(); els.search.focus(); els.search.select(); return; }
-  if (k === "?") { e.preventDefault(); toggleHelp(); return; }
-  if (k === "Enter") { e.preventDefault(); navOpen(); return; }
-  if (k === "j" || k === "J") { e.preventDefault(); navCard(1); return; }
-  if (k === "k" || k === "K") { e.preventDefault(); navCard(-1); return; }
-  if (k === "n" || k === "N") { e.preventDefault(); navSource(1); return; }
-  if (k === "p" || k === "P") { e.preventDefault(); navSource(-1); return; }
-  if (k === "G") { e.preventDefault(); window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }); return; }
-  if (k === "g") {
-    if (vimStep === 1) { window.scrollTo({ top: 0, behavior: "smooth" }); vimStep = 0; return; }
-    vimStep = 1;
-    clearTimeout(window._vimT);
-    window._vimT = setTimeout(() => { vimStep = 0; }, 400);
+
+  // Escape is the one binding that also fires while typing in the search box.
+  if (k === "Escape") {
+    if (isTypingTarget(e.target)) e.target.blur();
+    removePreview();
+    document.querySelector(".kbd-help")?.remove();
+    clearSelection();
     return;
   }
-  if (k === "d") { window.scrollBy({ top: window.innerHeight * 0.5, behavior: "smooth" }); return; }
-  if (k === "u") { window.scrollBy({ top: -window.innerHeight * 0.5, behavior: "smooth" }); return; }
-  if (k === "r") { loadFeed(); return; }
-  if (k === "m") { setMode(!state.withImages); return; }
-  if (k === "t") { setTheme(state.theme === "dark" ? "light" : "dark"); return; }
-  if (k === "s") { setSortMode(state.sortMode === "latest" ? "top" : "latest"); return; }
-  if (k === "1") { setActiveGroup("breaking"); return; }
-  if (k === "2") { setActiveGroup("analysis"); return; }
+
+  if (isTypingTarget(e.target)) return;
+
+  // A pending `g` only survives until the next keypress: anything other
+  // than a second `g` cancels it, so `gg` is the only multi-key chord.
+  if (vim.pendingG && k !== "g") {
+    vim.pendingG = false;
+    clearTimeout(vim.gTimer);
+  }
+
+  switch (k) {
+    case "/":
+      e.preventDefault();
+      els.search.focus();
+      els.search.select();
+      break;
+    case "?":
+      e.preventDefault();
+      toggleHelp();
+      break;
+    case "Enter":
+      e.preventDefault();
+      openSelected();
+      break;
+    case "j":
+    case "J":
+      e.preventDefault();
+      moveSelection(1);
+      break;
+    case "k":
+    case "K":
+      e.preventDefault();
+      moveSelection(-1);
+      break;
+    case "n":
+    case "N":
+      e.preventDefault();
+      cycleSource(1);
+      break;
+    case "p":
+    case "P":
+      e.preventDefault();
+      cycleSource(-1);
+      break;
+    case "[":
+      e.preventDefault();
+      cycleGroup(-1);
+      break;
+    case "]":
+      e.preventDefault();
+      cycleGroup(1);
+      break;
+    case "d":
+      e.preventDefault();
+      window.scrollBy({ top: window.innerHeight * 0.5, behavior: "smooth" });
+      break;
+    case "u":
+      e.preventDefault();
+      window.scrollBy({ top: -window.innerHeight * 0.5, behavior: "smooth" });
+      break;
+    case "G":
+      e.preventDefault();
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+      selectCardAt(feedCards().length - 1, { scroll: false });
+      break;
+    case "g":
+      e.preventDefault();
+      if (vim.pendingG) {
+        vim.pendingG = false;
+        clearTimeout(vim.gTimer);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        selectCardAt(0, { scroll: false });
+      } else {
+        vim.pendingG = true;
+        clearTimeout(vim.gTimer);
+        vim.gTimer = setTimeout(() => { vim.pendingG = false; }, 500);
+      }
+      break;
+    case "r":
+      e.preventDefault();
+      loadFeed();
+      break;
+    case "m":
+      e.preventDefault();
+      setMode(!state.withImages);
+      break;
+    case "t":
+      e.preventDefault();
+      setTheme(state.theme === "dark" ? "light" : "dark");
+      break;
+    case "1":
+      e.preventDefault();
+      setActiveGroup("news");
+      break;
+    case "2":
+      e.preventDefault();
+      setActiveGroup("hot");
+      break;
+    case "3":
+      e.preventDefault();
+      setActiveGroup("analysis");
+      break;
+    default:
+      break;
+  }
 }
 
 document.addEventListener("keydown", handleVimKey);
 
 setTheme(state.theme);
 setMode(state.withImages);
-setSortMode(state.sortMode);
 loadFeed();

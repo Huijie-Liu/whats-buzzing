@@ -243,6 +243,12 @@ h1 {
   }
 }
 
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
 .shell {
   width: min(1120px, calc(100% - 28px));
   margin: 14px auto 48px;
@@ -250,7 +256,8 @@ h1 {
 
 .category-tabs {
   display: inline-grid;
-  grid-template-columns: 1fr 1fr;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 3px;
   margin-bottom: 10px;
   padding: 3px;
@@ -264,9 +271,9 @@ h1 {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-width: 112px;
+  min-width: 84px;
   height: 32px;
-  padding: 0 12px;
+  padding: 0 14px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -400,6 +407,25 @@ body.theme-dark .story.translating:not(.read) {
   20% { background-color: #1a2540; }
   50% { background-color: #1a2540; }
   70% { background-color: var(--panel); }
+}
+
+/* Keyboard selection ring — a pseudo-element so it never collides with
+   the box-shadow used by .read / hover / translating states. */
+.story.selected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 2px var(--source-color, var(--ink));
+  pointer-events: none;
+}
+
+@media (hover: hover) {
+  .story:not(.read):not(.selected):hover {
+    border-color: var(--line-strong);
+    box-shadow: var(--tab-shadow);
+  }
 }
 
 .media {
@@ -688,25 +714,35 @@ body.text-only .media {
 
 .kbd-help {
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  inset: 0;
   z-index: 100;
-  display: grid;
-  gap: 8px;
-  min-width: 300px;
-  padding: 20px 24px;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--panel);
-  box-shadow: 0 20px 48px rgba(25, 27, 31, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 17, 21, 0.42);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
   cursor: pointer;
+  animation: fade-in 0.18s ease both;
+}
+
+.kbd-card {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 7px;
+  padding: 20px 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 24px 60px rgba(15, 17, 21, 0.3);
+  animation: fade-up 0.22s ease both;
 }
 
 .kbd-title {
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   color: var(--ink);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -721,14 +757,16 @@ body.text-only .media {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 48px;
+  flex: 0 0 auto;
+  min-width: 64px;
   height: 24px;
-  padding: 0 6px;
+  padding: 0 8px;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-bottom-width: 2px;
+  border-radius: 5px;
   background: var(--soft);
   color: var(--ink);
-  font-family: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   white-space: nowrap;
 }
@@ -737,21 +775,28 @@ body.text-only .media {
   color: var(--muted);
 }
 
+/* ---- Tablet / large phone: compact sticky header, stacked media ---- */
 @media (max-width: 820px) {
   .topbar {
-    position: static;
-    align-items: stretch;
-    flex-direction: column;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 10px 12px;
+    padding: 10px 16px;
+  }
+
+  .brand {
+    min-width: 0;
+    flex: 1 1 auto;
   }
 
   .actions {
-    justify-content: stretch;
+    flex: 0 0 auto;
+    gap: 8px;
   }
 
   .search {
+    order: 2;
+    flex-basis: 100%;
     grid-template-columns: 22px minmax(0, 1fr);
-    flex: 1 1 auto;
   }
 
   .story.has-image {
@@ -763,47 +808,83 @@ body.text-only .media {
   }
 
   .media img {
-    max-height: 240px;
+    min-height: 160px;
+    max-height: 220px;
   }
 }
 
-@media (max-width: 540px) {
-  .shell {
-    width: min(100% - 20px, 1120px);
-    margin-top: 10px;
+/* ---- Let the group / sort tab rows wrap instead of overflowing ---- */
+@media (max-width: 640px) {
+  .top-row {
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .category-tabs {
-    width: 100%;
+    flex: 1 1 auto;
+    margin-bottom: 0;
+  }
+
+  .category-tab {
+    min-width: 0;
+  }
+}
+
+/* ---- Phone: full-width controls, larger tap targets, denser cards ---- */
+@media (max-width: 540px) {
+  .topbar {
+    padding: 9px 12px;
+  }
+
+  .shell {
+    width: calc(100% - 24px);
+    margin-top: 10px;
+  }
+
+  h1 {
+    font-size: 17px;
   }
 
   .actions {
-    flex-wrap: wrap;
-  }
-
-  .search {
-    flex-basis: 100%;
+    flex: 1 1 100%;
+    justify-content: flex-end;
   }
 
   .mode {
     flex: 1 1 auto;
   }
 
+  .mode button {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
   .icon-button {
-    flex: 0 0 42px;
+    flex: 0 0 40px;
+    width: 40px;
   }
 
   .tab {
     flex: 1 1 calc(50% - 6px);
     justify-content: center;
+    min-height: 36px;
   }
 
   .title {
-    font-size: 17px;
+    font-size: 16px;
+    line-height: 1.34;
+  }
+
+  .summary {
+    -webkit-line-clamp: 3;
   }
 
   .story-body {
-    padding: 12px 14px;
+    padding: 13px 14px;
   }
 
+  .scroll-top {
+    right: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
 }
