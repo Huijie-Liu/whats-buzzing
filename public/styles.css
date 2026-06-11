@@ -442,7 +442,6 @@ body.theme-dark .story.translating:not(.read) {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 16px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.2;
@@ -459,8 +458,29 @@ body.theme-dark .story.translating:not(.read) {
   margin-left: 0;
 }
 
+/* Time floats as a subtle chip in the top-right corner of the card body,
+   overlapping the title area — no wasted row. */
 .meta time {
-  margin-left: auto;
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: 2;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--panel);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* For image-less cards, the meta row has no visible children (source and
+   dot are hidden, time is absolute). Collapse it so it doesn't consume
+   any vertical space. */
+.story:not(.story-google):not(.story-google_zh) .meta {
+  height: 0;
+  min-height: 0;
+  overflow: visible;
 }
 
 .hn-stat {
@@ -469,7 +489,7 @@ body.theme-dark .story.translating:not(.read) {
 
 .title {
   display: block;
-  margin: 6px 0 0;
+  margin: 2px 0 0;
   color: var(--ink);
   font-size: 19px;
   font-weight: 740;
