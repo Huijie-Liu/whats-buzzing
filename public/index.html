@@ -8,6 +8,10 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <div class="category-bar">
+      <nav id="categoryTabs" class="category-tabs" aria-label="新闻类别"></nav>
+    </div>
+
     <header class="topbar">
       <div class="brand">
         <svg class="mark" width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
@@ -20,17 +24,14 @@
         </div>
       </div>
       <div class="actions" role="group" aria-label="工具栏">
-        <label class="search">
-          <span aria-hidden="true">⌕</span>
-          <input id="searchInput" type="search" placeholder="搜索标题或摘要" autocomplete="off" />
-        </label>
-        <div class="mode" aria-label="显示模式">
-          <button id="imageMode" class="active" type="button">有图</button>
-          <button id="textMode" type="button">无图</button>
+        <div class="search-box">
+          <button id="searchToggle" class="icon-button" type="button" aria-label="搜索" aria-expanded="false">
+            <span aria-hidden="true">⌕</span>
+          </button>
+          <label class="search">
+            <input id="searchInput" type="search" placeholder="搜索标题或摘要" autocomplete="off" />
+          </label>
         </div>
-        <button id="refreshButton" class="icon-button" type="button" aria-label="刷新">
-          <span aria-hidden="true">↻</span>
-        </button>
         <button id="themeButton" class="icon-button" type="button" aria-label="切换夜间模式" title="切换夜间模式">
           <span aria-hidden="true">☾</span>
         </button>
@@ -38,10 +39,6 @@
     </header>
 
     <main class="shell">
-      <div class="top-row">
-        <nav id="categoryTabs" class="category-tabs" aria-label="新闻类别"></nav>
-      </div>
-      <nav id="sourceTabs" class="tabs" aria-label="来源"></nav>
       <section id="errorBox" class="notice" hidden></section>
       <section id="feed" class="feed" aria-live="polite"></section>
     </main>

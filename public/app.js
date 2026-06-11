@@ -58,11 +58,10 @@ function loadReadIds() {
 
 const state = {
   activeGroup: initialSourceGroup(),
-  activeSource: localStorage.getItem("activeSource") || "all",
   items: [],
   sourceCounts: new Map(),
   query: "",
-  withImages: localStorage.getItem("displayMode") !== "text",
+  withImages: true,
   theme: localStorage.getItem(THEME_STORAGE_KEY) || "light",
   loading: false,
   readIds: loadReadIds(),
@@ -72,14 +71,12 @@ let itemSeq = 0;
 
 const els = {
   categoryTabs: document.querySelector("#categoryTabs"),
-  tabs: document.querySelector("#sourceTabs"),
   feed: document.querySelector("#feed"),
   error: document.querySelector("#errorBox"),
   search: document.querySelector("#searchInput"),
-  refresh: document.querySelector("#refreshButton"),
+  searchBox: document.querySelector(".search-box"),
+  searchToggle: document.querySelector("#searchToggle"),
   theme: document.querySelector("#themeButton"),
-  imageMode: document.querySelector("#imageMode"),
-  textMode: document.querySelector("#textMode"),
   template: document.querySelector("#articleTemplate"),
 };
 
@@ -139,23 +136,10 @@ function sourceCount(sourceKey) {
   return Math.min(state.sourceCounts.get(sourceKey) || 0, MAX_ITEMS_PER_TAB);
 }
 
-function groupCount(groupKey) {
-  return Math.min(
-    SOURCES.filter((source) => source.group === groupKey).reduce((total, source) => {
-      return total + (state.sourceCounts.get(source.key) || 0);
-    }, 0),
-    MAX_ITEMS_PER_TAB,
-  );
-}
-
 function setActiveGroup(groupKey) {
   if (!SOURCE_GROUPS.some((group) => group.key === groupKey)) return;
   state.activeGroup = groupKey;
   localStorage.setItem("activeSourceGroup", groupKey);
-  if (state.activeSource !== "all" && sourceGroup(state.activeSource) !== state.activeGroup) {
-    state.activeSource = "all";
-    localStorage.setItem("activeSource", "all");
-  }
   render();
   startTranslationsForVisibleItems();
 }
@@ -253,15 +237,6 @@ function formatRelativeTime(value) {
   }).format(date);
 }
 
-function setMode(withImages) {
-  state.withImages = withImages;
-  localStorage.setItem("displayMode", withImages ? "image" : "text");
-  document.body.classList.toggle("text-only", !withImages);
-  els.imageMode.classList.toggle("active", withImages);
-  els.textMode.classList.toggle("active", !withImages);
-  render();
-}
-
 function isLiveTitle(title) {
   return /^Live\b|^LIVE\b|^\[Live\]|^【直播】|直播\|/.test(title || "");
 }
@@ -279,53 +254,28 @@ function renderCategoryTabs() {
   });
 }
 
-function renderTabs() {
-  els.tabs.replaceChildren();
-  const sources = [
-    { key: "all", label: "全部", accent: "#191b1f" },
-    ...activeGroupSources(),
-  ];
-  if (state.activeSource !== "all" && !sources.some((source) => source.key === state.activeSource)) {
-    state.activeSource = "all";
-    localStorage.setItem("activeSource", "all");
-  }
-  sources.forEach((source) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "tab";
-    button.style.setProperty("--accent", source.accent);
-    button.classList.toggle("active", state.activeSource === source.key);
-    const count = source.key === "all" ? groupCount(state.activeGroup) : sourceCount(source.key);
-    button.innerHTML = `<span>${source.label}</span><b>${count}</b>`;
-    button.addEventListener("click", () => {
-      state.activeSource = source.key;
-      localStorage.setItem("activeSource", source.key);
-      render();
-      startTranslationsForVisibleItems();
-    });
-    els.tabs.append(button);
+function matchesQuery(item, query) {
+  if (!query) return true;
+  return `${item.titleOriginal} ${item.summaryOriginal} ${item.titleZh || ""} ${item.summaryZh || ""} ${item.sourceLabel}`.toLowerCase().includes(query);
+}
+
+// One entry per source in the active group, each carrying its own items
+// sorted newest-first. This drives the column board.
+function groupColumns() {
+  const query = state.query.trim().toLowerCase();
+  return activeGroupSources().map((source) => {
+    const items = state.items
+      .filter((item) => item.source === source.key && matchesQuery(item, query))
+      .sort((a, b) => (b.publishedAt || "").localeCompare(a.publishedAt || ""))
+      .slice(0, MAX_ITEMS_PER_TAB);
+    return { source: source.key, label: source.label, accent: source.accent, items };
   });
 }
 
-function getFilteredItems() {
-  const query = state.query.trim().toLowerCase();
-  const limit = state.activeSource === "all" ? 100 : MAX_ITEMS_PER_TAB;
-  let results = state.items.filter((item) => {
-    if (!isInActiveGroup(item)) return false;
-    if (state.activeSource !== "all" && item.source !== state.activeSource) return false;
-    if (!query) return true;
-    return `${item.titleOriginal} ${item.summaryOriginal} ${item.titleZh || ""} ${item.summaryZh || ""} ${item.sourceLabel}`.toLowerCase().includes(query);
-  });
-
-  // 热点 keeps each source's own ranking (server arrival order); the
-  // other groups are sorted newest-first.
-  if (state.activeGroup === "hot") {
-    results.sort((a, b) => ((a._seq || 0) - (b._seq || 0)));
-  } else {
-    results.sort((a, b) => (b.publishedAt || "").localeCompare(a.publishedAt || ""));
-  }
-
-  return results.slice(0, limit);
+// Flat list of every item currently on screen (across all columns) — used
+// by the translation logic to pick candidates.
+function displayedItems() {
+  return groupColumns().flatMap((column) => column.items);
 }
 
 function renderArticle(item) {
@@ -544,10 +494,14 @@ async function streamTranslations(items, runId, signal) {
 function getVisibleItemIds() {
   const ids = new Set();
   const viewH = window.innerHeight;
-  const margin = viewH;
+  const viewW = window.innerWidth;
+  const vMargin = viewH;
+  const hMargin = viewW * 0.5;
   els.feed.querySelectorAll(".story").forEach((el) => {
     const r = el.getBoundingClientRect();
-    if (r.bottom >= -margin && r.top <= viewH + margin) {
+    const verticallyNear = r.bottom >= -vMargin && r.top <= viewH + vMargin;
+    const horizontallyNear = r.right >= -hMargin && r.left <= viewW + hMargin;
+    if (verticallyNear && horizontallyNear) {
       ids.add(el.dataset.itemId);
     }
   });
@@ -574,7 +528,7 @@ function startTranslationsForVisibleItems() {
   resetActiveTranslations();
 
   const visibleIds = getVisibleItemIds();
-  const pending = getFilteredItems().filter(shouldTranslateItem);
+  const pending = displayedItems().filter(shouldTranslateItem);
   if (!pending.length) return;
 
   const visible = pending.filter((item) => visibleIds.has(item.id));
@@ -589,7 +543,7 @@ function onScrollTranslate() {
   if (scrollTimer) clearTimeout(scrollTimer);
   scrollTimer = setTimeout(() => {
     const visibleIds = getVisibleItemIds();
-    const pending = getFilteredItems().filter(shouldTranslateItem);
+    const pending = displayedItems().filter(shouldTranslateItem);
     const needsWork = pending.filter((item) => visibleIds.has(item.id));
     if (!needsWork.length) return;
 
@@ -607,14 +561,13 @@ function drainPendingQueue() {
   if (!pendingQueue.length) return;
   const ids = new Set(pendingQueue);
   pendingQueue = [];
-  const items = getFilteredItems().filter(item => ids.has(item.id) && shouldTranslateItem(item));
+  const items = displayedItems().filter(item => ids.has(item.id) && shouldTranslateItem(item));
   if (items.length) {
     translateBatch(items);
   }
 }
 
-function renderSkeleton() {
-  const count = state.activeSource === "all" ? 6 : 4;
+function renderSkeleton(count = 4) {
   const fragment = document.createDocumentFragment();
   for (let i = 0; i < count; i++) {
     const skel = document.createElement("div");
@@ -627,21 +580,43 @@ function renderSkeleton() {
   return fragment;
 }
 
-function renderFeed() {
-  const items = getFilteredItems();
-  els.feed.replaceChildren();
-  if (state.loading && !items.length) {
-    els.feed.appendChild(renderSkeleton());
-  } else if (!items.length) {
+function renderColumnBody(column) {
+  if (state.loading && !column.items.length) return renderSkeleton();
+  if (!column.items.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = state.query.trim() ? "没有匹配的内容" : "暂无内容，请刷新重试";
-    els.feed.append(empty);
-  } else {
-    const fragment = document.createDocumentFragment();
-    items.forEach((item) => fragment.append(renderArticle(item)));
-    els.feed.append(fragment);
+    empty.textContent = state.query.trim() ? "没有匹配的内容" : "暂无内容";
+    return empty;
   }
+  const fragment = document.createDocumentFragment();
+  column.items.forEach((item) => fragment.append(renderArticle(item)));
+  return fragment;
+}
+
+// Renders the active group as a horizontal board of per-source columns,
+// each independently scrollable. Item order within a column is newest-first.
+function renderColumns() {
+  const columns = groupColumns();
+  els.feed.replaceChildren();
+  const fragment = document.createDocumentFragment();
+  columns.forEach((column) => {
+    const col = document.createElement("section");
+    col.className = "column";
+    col.dataset.source = column.source;
+    col.style.setProperty("--accent", column.accent || "#191b1f");
+
+    const head = document.createElement("div");
+    head.className = "column-head";
+    head.innerHTML = `<span class="column-dot"></span><span class="column-name">${column.label}</span><b class="column-count">${sourceCount(column.source)}</b>`;
+
+    const list = document.createElement("div");
+    list.className = "column-list";
+    list.append(renderColumnBody(column));
+
+    col.append(head, list);
+    fragment.append(col);
+  });
+  els.feed.append(fragment);
   restoreSelection();
 }
 
@@ -658,8 +633,7 @@ function renderErrors(errors = []) {
 
 function render() {
   renderCategoryTabs();
-  renderTabs();
-  renderFeed();
+  renderColumns();
 }
 
 async function loadFeed() {
@@ -668,8 +642,7 @@ async function loadFeed() {
   state.items = [];
   state.sourceCounts = new Map();
   itemSeq = 0;
-  els.refresh.classList.add("loading");
-  renderFeed();
+  renderColumns();
 
   try {
     const response = await fetch("/api/feed?source=all", { cache: "no-store" });
@@ -716,7 +689,6 @@ async function loadFeed() {
     els.error.textContent = `无法读取 feed：${error.message}`;
   } finally {
     state.loading = false;
-    els.refresh.classList.remove("loading");
     render();
     startTranslationsForVisibleItems();
   }
@@ -724,27 +696,57 @@ async function loadFeed() {
 
 els.search.addEventListener("input", (event) => {
   state.query = event.target.value;
-  renderFeed();
+  renderColumns();
   startTranslationsForVisibleItems();
 });
 
-els.refresh.addEventListener("click", loadFeed);
+// Search is collapsed to a magnifier by default; the toggle expands the
+// input and focuses it. An empty field collapses again when it loses focus.
+function expandSearch() {
+  els.searchBox.classList.add("expanded");
+  els.searchToggle.setAttribute("aria-expanded", "true");
+  els.search.focus();
+}
+
+function collapseSearchIfEmpty() {
+  if (!els.search.value.trim()) {
+    els.searchBox.classList.remove("expanded");
+    els.searchToggle.setAttribute("aria-expanded", "false");
+  }
+}
+
+els.searchToggle.addEventListener("click", () => {
+  if (els.searchBox.classList.contains("expanded")) collapseSearchIfEmpty();
+  else expandSearch();
+});
+els.search.addEventListener("blur", collapseSearchIfEmpty);
+
 els.theme.addEventListener("click", () => setTheme(state.theme === "dark" ? "light" : "dark"));
-els.imageMode.addEventListener("click", () => setMode(true));
-els.textMode.addEventListener("click", () => setMode(false));
-window.addEventListener("scroll", onScrollTranslate, { passive: true });
+
+// Scrolling now happens inside the per-column lists (vertical) and the
+// board itself (horizontal), never on window. scroll events don't bubble
+// but do reach the capture phase, so a single capturing listener on the
+// board catches every inner scroll.
+els.feed.addEventListener("scroll", onScrollTranslate, { capture: true, passive: true });
+
+function columnLists() {
+  return [...els.feed.querySelectorAll(".column-list")];
+}
 
 const scrollTopBtn = document.createElement("button");
 scrollTopBtn.className = "scroll-top";
 scrollTopBtn.type = "button";
 scrollTopBtn.innerHTML = "&#8593;";
 scrollTopBtn.setAttribute("aria-label", "回到顶部");
-scrollTopBtn.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+scrollTopBtn.addEventListener("click", () => {
+  columnLists().forEach((list) => list.scrollTo({ top: 0, behavior: "smooth" }));
+});
 document.body.appendChild(scrollTopBtn);
 
-window.addEventListener("scroll", () => {
-  scrollTopBtn.classList.toggle("visible", window.scrollY > 600);
-}, { passive: true });
+els.feed.addEventListener("scroll", () => {
+  const scrolled = columnLists().some((list) => list.scrollTop > 600);
+  scrollTopBtn.classList.toggle("visible", scrolled);
+}, { capture: true, passive: true });
 
 let previewTimer = null;
 let previewPopup = null;
@@ -795,7 +797,7 @@ els.feed.addEventListener("mouseout", (e) => {
   if (e.target.closest(".title[href]")) removePreview();
 });
 
-window.addEventListener("scroll", removePreview, { passive: true });
+els.feed.addEventListener("scroll", removePreview, { capture: true, passive: true });
 
 /* ------------------------------------------------------------------ *
  *  Keyboard navigation (vim-style)
@@ -824,13 +826,49 @@ function cardIndexById(cards, id) {
   return id ? cards.findIndex((node) => node.dataset.itemId === id) : -1;
 }
 
-// First card whose bottom edge is below the sticky header — i.e. the
-// first one actually visible. Used to anchor the very first j/k press.
-function firstCardInView(cards) {
-  for (let i = 0; i < cards.length; i += 1) {
-    if (cards[i].getBoundingClientRect().bottom > HEADER_OFFSET) return i;
+function columns() {
+  return [...els.feed.querySelectorAll(".column")];
+}
+
+function cardsIn(columnEl) {
+  return columnEl ? [...columnEl.querySelectorAll(".story")] : [];
+}
+
+// The board column that currently has focus: the one holding the selected
+// card, or — when nothing is selected — the leftmost column still in view.
+function firstVisibleColumn() {
+  const viewW = window.innerWidth;
+  const cols = columns();
+  for (const col of cols) {
+    const r = col.getBoundingClientRect();
+    if (r.right > 8 && r.left < viewW) return col;
   }
-  return cards.length ? cards.length - 1 : -1;
+  return cols[0] || null;
+}
+
+function focusedColumn() {
+  if (vim.selectedId) {
+    const node = feedCards().find((n) => n.dataset.itemId === vim.selectedId);
+    if (node) return node.closest(".column");
+  }
+  return firstVisibleColumn();
+}
+
+function focusedColumnList() {
+  return focusedColumn()?.querySelector(".column-list") || null;
+}
+
+// First card in a column whose bottom edge sits below the column's scroll
+// viewport top — i.e. the first one actually visible inside that column.
+function firstCardInColumn(columnEl) {
+  const list = columnEl?.querySelector(".column-list");
+  const cards = cardsIn(columnEl);
+  if (!list || !cards.length) return null;
+  const top = list.getBoundingClientRect().top;
+  for (const card of cards) {
+    if (card.getBoundingClientRect().bottom > top + 4) return card;
+  }
+  return cards[cards.length - 1];
 }
 
 function paintSelection(node) {
@@ -856,25 +894,41 @@ function restoreSelection() {
   else paintSelection(cards[idx]);
 }
 
-function selectCardAt(index, { scroll = true } = {}) {
-  const cards = feedCards();
-  if (!cards.length) { clearSelection(); return; }
-  const node = cards[Math.min(Math.max(index, 0), cards.length - 1)];
+function selectCard(node, { scroll = true } = {}) {
+  if (!node) { clearSelection(); return; }
   vim.selectedId = node.dataset.itemId || null;
   paintSelection(node);
   if (!scroll) return;
-  const rect = node.getBoundingClientRect();
-  if (rect.top < HEADER_OFFSET || rect.bottom > window.innerHeight - 16) {
-    node.scrollIntoView({ block: "center", behavior: "smooth" });
-  }
+  const r = node.getBoundingClientRect();
+  const offscreen =
+    r.top < HEADER_OFFSET || r.bottom > window.innerHeight - 16 ||
+    r.left < 0 || r.right > window.innerWidth;
+  // scrollIntoView walks every scrollable ancestor, so this scrolls both
+  // the column vertically and the board horizontally as needed.
+  if (offscreen) node.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
 }
 
+// j/k move within the focused column only (never jump across columns).
 function moveSelection(dir) {
-  const cards = feedCards();
+  const col = focusedColumn();
+  const cards = cardsIn(col);
   if (!cards.length) return;
-  const current = cardIndexById(cards, vim.selectedId);
-  const next = current === -1 ? firstCardInView(cards) : current + dir;
-  selectCardAt(next);
+  const current = cards.findIndex((n) => n.dataset.itemId === vim.selectedId);
+  if (current === -1) { selectCard(firstCardInColumn(col)); return; }
+  const next = Math.min(Math.max(current + dir, 0), cards.length - 1);
+  selectCard(cards[next]);
+}
+
+// h/l (and n/p) switch to an adjacent column, scrolling the board to it.
+function switchColumn(dir) {
+  const cols = columns();
+  if (!cols.length) return;
+  let idx = cols.indexOf(focusedColumn());
+  if (idx === -1) idx = 0;
+  const next = cols[Math.min(Math.max(idx + dir, 0), cols.length - 1)];
+  next.scrollIntoView({ inline: "start", block: "nearest", behavior: "smooth" });
+  selectCard(firstCardInColumn(next), { scroll: false });
+  startTranslationsForVisibleItems();
 }
 
 function openSelected() {
@@ -887,16 +941,6 @@ function openSelected() {
   const item = findItemById(vim.selectedId);
   if (item) markRead(item, node);
   window.open(link.href, "_blank", "noopener");
-}
-
-function cycleSource(dir) {
-  const sources = [{ key: "all" }, ...activeGroupSources()];
-  const idx = sources.findIndex((s) => s.key === state.activeSource);
-  const next = sources[(idx + dir + sources.length) % sources.length];
-  state.activeSource = next.key;
-  localStorage.setItem("activeSource", next.key);
-  render();
-  startTranslationsForVisibleItems();
 }
 
 function cycleGroup(dir) {
@@ -913,15 +957,14 @@ function toggleHelp() {
   const existing = document.querySelector(".kbd-help");
   if (existing) { existing.remove(); return; }
   const rows = [
-    ["j / k", "下一篇 / 上一篇"],
+    ["j / k", "本列下一篇 / 上一篇"],
+    ["h / l", "上一列 / 下一列"],
     ["Enter", "打开选中文章"],
-    ["n / p", "下一个源 / 上一个源"],
     ["1 / 2 / 3", "新闻 / 热点 / 深度"],
     ["[ / ]", "上一组 / 下一组"],
-    ["d / u", "向下 / 向上半页"],
-    ["g g / G", "顶部 / 底部"],
+    ["d / u", "本列向下 / 向上半页"],
+    ["g g / G", "本列顶部 / 底部"],
     ["/", "搜索"],
-    ["m", "有图 / 无图"],
     ["t", "明暗主题"],
     ["r", "刷新"],
     ["Esc", "取消选中 / 关闭"],
@@ -963,7 +1006,7 @@ function handleVimKey(e) {
   switch (k) {
     case "/":
       e.preventDefault();
-      els.search.focus();
+      expandSearch();
       els.search.select();
       break;
     case "?":
@@ -984,15 +1027,19 @@ function handleVimKey(e) {
       e.preventDefault();
       moveSelection(-1);
       break;
-    case "n":
-    case "N":
-      e.preventDefault();
-      cycleSource(1);
-      break;
+    case "h":
+    case "H":
     case "p":
     case "P":
       e.preventDefault();
-      cycleSource(-1);
+      switchColumn(-1);
+      break;
+    case "l":
+    case "L":
+    case "n":
+    case "N":
+      e.preventDefault();
+      switchColumn(1);
       break;
     case "[":
       e.preventDefault();
@@ -1004,24 +1051,32 @@ function handleVimKey(e) {
       break;
     case "d":
       e.preventDefault();
-      window.scrollBy({ top: window.innerHeight * 0.5, behavior: "smooth" });
+      focusedColumnList()?.scrollBy({ top: window.innerHeight * 0.5, behavior: "smooth" });
       break;
     case "u":
       e.preventDefault();
-      window.scrollBy({ top: -window.innerHeight * 0.5, behavior: "smooth" });
+      focusedColumnList()?.scrollBy({ top: -window.innerHeight * 0.5, behavior: "smooth" });
       break;
     case "G":
       e.preventDefault();
-      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-      selectCardAt(feedCards().length - 1, { scroll: false });
+      {
+        const col = focusedColumn();
+        const list = col?.querySelector(".column-list");
+        const cards = cardsIn(col);
+        if (list) list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
+        if (cards.length) selectCard(cards[cards.length - 1], { scroll: false });
+      }
       break;
     case "g":
       e.preventDefault();
       if (vim.pendingG) {
         vim.pendingG = false;
         clearTimeout(vim.gTimer);
-        window.scrollTo({ top: 0, behavior: "smooth" });
-        selectCardAt(0, { scroll: false });
+        const col = focusedColumn();
+        const list = col?.querySelector(".column-list");
+        const cards = cardsIn(col);
+        if (list) list.scrollTo({ top: 0, behavior: "smooth" });
+        if (cards.length) selectCard(cards[0], { scroll: false });
       } else {
         vim.pendingG = true;
         clearTimeout(vim.gTimer);
@@ -1031,10 +1086,6 @@ function handleVimKey(e) {
     case "r":
       e.preventDefault();
       loadFeed();
-      break;
-    case "m":
-      e.preventDefault();
-      setMode(!state.withImages);
       break;
     case "t":
       e.preventDefault();
@@ -1060,5 +1111,4 @@ function handleVimKey(e) {
 document.addEventListener("keydown", handleVimKey);
 
 setTheme(state.theme);
-setMode(state.withImages);
 loadFeed();

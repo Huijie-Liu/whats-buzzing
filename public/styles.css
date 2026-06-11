@@ -63,6 +63,11 @@ body.theme-dark {
 body {
   margin: 0;
   min-width: 320px;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--bg);
   color: var(--ink);
   font-family:
@@ -82,8 +87,7 @@ input {
 }
 
 .topbar {
-  position: sticky;
-  top: 0;
+  flex: 0 0 auto;
   z-index: 10;
   display: flex;
   align-items: center;
@@ -124,16 +128,31 @@ h1 {
   min-width: 0;
 }
 
-.search {
-  display: grid;
-  grid-template-columns: 22px minmax(120px, 270px);
+/* Search collapses to just the magnifier button; clicking expands the
+   input inline (width transition). It collapses again when emptied. */
+.search-box {
+  display: flex;
   align-items: center;
+  gap: 6px;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  width: 0;
   height: 38px;
-  padding: 0 12px;
-  border: 1px solid var(--line);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: var(--panel);
-  color: var(--muted);
+  transition: width 0.25s ease, padding 0.25s ease, border-color 0.25s ease;
+}
+
+.search-box.expanded .search {
+  width: min(260px, 56vw);
+  padding: 0 12px;
+  border-color: var(--line);
 }
 
 .search input {
@@ -146,61 +165,20 @@ h1 {
   font-size: 15px;
 }
 
-.mode {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  height: 38px;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--soft);
-}
-
-.mode button,
 .icon-button {
-  border: 0;
+  border: 1px solid var(--line);
   cursor: pointer;
   color: var(--muted);
-}
-
-.mode button {
-  min-width: 52px;
-  padding: 0 10px;
-  border-radius: 6px;
-  background: transparent;
-  font-size: 14px;
-}
-
-.mode button.active {
-  background: var(--panel);
-  color: var(--ink);
-  box-shadow: var(--control-shadow);
-}
-
-.icon-button {
   width: 38px;
   height: 38px;
-  border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
   font-size: 19px;
   line-height: 1;
 }
 
-.icon-button:hover,
-.mode button:hover {
+.icon-button:hover {
   color: var(--ink);
-}
-
-.icon-button.loading span {
-  display: inline-block;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @keyframes pulse {
@@ -250,8 +228,20 @@ h1 {
 }
 
 .shell {
-  width: min(1120px, calc(100% - 28px));
-  margin: 14px auto 48px;
+  width: min(1600px, calc(100% - 28px));
+  margin: 12px auto 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Centered segmented control sitting above the top bar. */
+.category-bar {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: 12px 14px 0;
 }
 
 .category-tabs {
@@ -259,7 +249,6 @@ h1 {
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
   gap: 3px;
-  margin-bottom: 10px;
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -294,56 +283,8 @@ h1 {
   box-shadow: var(--control-shadow);
 }
 
-.top-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-
-.tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--panel);
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 14px;
-}
-
-.tab::before {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent, #191b1f);
-  content: "";
-}
-
-.tab b {
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.tab.active {
-  border-color: var(--line-strong);
-  color: var(--ink);
-  box-shadow: var(--tab-shadow);
-}
-
 .notice {
+  flex: 0 0 auto;
   margin: 0 0 14px;
   padding: 12px 14px;
   border: 1px solid var(--notice-border);
@@ -353,9 +294,87 @@ h1 {
   font-size: 14px;
 }
 
+/* ---- Board: horizontal row of per-source columns, swipe to browse ---- */
 .feed {
-  display: grid;
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 10px;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+  /* Center the columns when they fit; fall back to start (so nothing is
+     clipped / unreachable) once they overflow and need horizontal scroll. */
+  justify-content: safe center;
+}
+
+.column {
+  flex: 0 0 340px;
+  max-width: 340px;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.column-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
   gap: 8px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--soft);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.column-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent, #191b1f);
+}
+
+.column-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-count {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.column-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+/* Cards keep their natural height and overflow into the scroll area —
+   without this the flex column shrinks them all to fit the fixed height. */
+.column-list > * {
+  flex: 0 0 auto;
 }
 
 .story {
@@ -376,7 +395,7 @@ h1 {
 }
 
 .story.has-image {
-  grid-template-columns: minmax(0, 1fr) 200px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .story.read {
@@ -430,8 +449,7 @@ body.theme-dark .story.translating:not(.read) {
 
 .media {
   display: none;
-  order: 2;
-  min-height: 100%;
+  order: 0;
   background: var(--soft);
   position: relative;
   z-index: 1;
@@ -443,9 +461,7 @@ body.theme-dark .story.translating:not(.read) {
 
 .media img {
   width: 100%;
-  height: 100%;
-  min-height: 130px;
-  max-height: 200px;
+  height: 170px;
   object-fit: cover;
   display: block;
 }
@@ -595,21 +611,6 @@ body.theme-dark .story.translating:not(.read) {
 
 .links a:hover {
   color: var(--ink);
-}
-
-body.text-only .story,
-body.text-only .story.has-image {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-body.text-only .media {
-  display: none;
-}
-
-@media (min-width: 721px) {
-  body.text-only .feed {
-    grid-template-columns: 1fr 1fr;
-  }
 }
 
 .empty {
@@ -793,36 +794,15 @@ body.text-only .media {
     gap: 8px;
   }
 
-  .search {
-    order: 2;
-    flex-basis: 100%;
-    grid-template-columns: 22px minmax(0, 1fr);
-  }
-
-  .story.has-image {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .story.has-image .media {
-    order: 0;
-  }
-
   .media img {
-    min-height: 160px;
-    max-height: 220px;
+    height: 190px;
   }
 }
 
-/* ---- Let the group / sort tab rows wrap instead of overflowing ---- */
+/* ---- Narrow: let the expanded search shrink to fit ---- */
 @media (max-width: 640px) {
-  .top-row {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .category-tabs {
-    flex: 1 1 auto;
-    margin-bottom: 0;
+  .search-box.expanded .search {
+    width: min(200px, 46vw);
   }
 
   .category-tab {
@@ -845,29 +825,20 @@ body.text-only .media {
     font-size: 17px;
   }
 
-  .actions {
-    flex: 1 1 100%;
-    justify-content: flex-end;
-  }
-
-  .mode {
-    flex: 1 1 auto;
-  }
-
-  .mode button {
-    min-width: 0;
-    flex: 1 1 0;
-  }
-
   .icon-button {
     flex: 0 0 40px;
     width: 40px;
   }
 
-  .tab {
-    flex: 1 1 calc(50% - 6px);
-    justify-content: center;
-    min-height: 36px;
+  /* One column fills the viewport; swipe snaps cleanly to the next ---- */
+  .feed {
+    gap: 10px;
+    scroll-snap-type: x mandatory;
+  }
+
+  .column {
+    flex-basis: 86vw;
+    max-width: 86vw;
   }
 
   .title {
