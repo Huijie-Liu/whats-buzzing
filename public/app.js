@@ -281,7 +281,7 @@ function renderArticle(item) {
   const sourceKey = item.source || "";
 
   node.dataset.itemId = item.id || "";
-  node.classList.add(`story-${sourceKey}`);
+  if (sourceKey) node.classList.add(`story-${sourceKey}`);
   node.classList.toggle("has-image", hasImage);
   node.classList.toggle("read", state.readIds.has(item.id));
   node.classList.toggle("translating", item.translationStatus === "streaming" || item.translationStatus === "queued");
@@ -416,7 +416,12 @@ function renderArticle(item) {
     timeEl.classList.add("card-time");
     if (sourceKey === "hn") {
       const hnStats = node.querySelector(".card-stats");
-      if (hnStats) hnStats.insertBefore(timeEl, hnStats.firstChild);
+      if (hnStats) {
+        hnStats.insertBefore(timeEl, hnStats.firstChild);
+      } else {
+        // No badges (e.g. job posting with no score/comments): fall back to links
+        links.insertBefore(timeEl, links.firstChild);
+      }
     } else {
       links.insertBefore(timeEl, links.firstChild);
     }
