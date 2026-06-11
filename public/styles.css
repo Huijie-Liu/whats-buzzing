@@ -448,20 +448,15 @@ body.theme-dark .story.translating:not(.read) {
   line-height: 1.2;
 }
 
-.source {
-  color: var(--source-color, var(--ink));
-  font-weight: 720;
+.meta .source,
+.meta .dot {
+  display: none;
 }
 
-.story.read .source {
-  color: var(--read-muted);
-}
-
-.dot {
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
-  background: var(--line-strong);
+/* Google News publisher badge stays visible (it shows the actual
+   article publisher, not the column name). */
+.publisher-badge {
+  margin-left: 0;
 }
 
 .meta time {
