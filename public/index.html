@@ -3,15 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>News Focus</title>
+    <title>Buzzing Focus</title>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="category-bar">
-      <nav id="categoryTabs" class="category-tabs" aria-label="新闻类别"></nav>
-    </div>
-
     <header class="topbar">
       <div class="brand">
         <svg class="mark" width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
@@ -20,9 +16,10 @@
           <circle cx="16" cy="16" r="2.6" fill="#fff"/>
         </svg>
         <div>
-          <h1>News Focus</h1>
+          <h1>Buzzing Focus</h1>
         </div>
       </div>
+      <nav id="categoryTabs" class="category-tabs" aria-label="新闻类别"></nav>
       <div class="actions" role="group" aria-label="工具栏">
         <div class="search-box">
           <button id="searchToggle" class="icon-button" type="button" aria-label="搜索" aria-expanded="false">
@@ -56,10 +53,9 @@
             <span class="hn-stat"></span>
           </div>
           <a class="title" target="_blank" rel="noreferrer"></a>
-          <p class="original-title"></p>
           <p class="summary"></p>
           <div class="links">
-            <a class="origin" target="_blank" rel="noreferrer">原文</a>
+            <button class="expand-toggle" type="button">展开</button>
             <a class="discussion" target="_blank" rel="noreferrer">讨论</a>
           </div>
         </div>

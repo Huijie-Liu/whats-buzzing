@@ -117,6 +117,30 @@ SOURCES = {
             "https://feeds.bloomberg.com/pursuits/news.rss",
         ],
     },
+    "wsj": {
+        "label": "华尔街日报",
+        "short": "WSJ",
+        "kind": "google_rss",
+        "home": "https://www.wsj.com/",
+        "accent": "#333740",
+        "story_limit": 50,
+        "show_publisher": False,
+        "feeds": [
+            "https://news.google.com/rss/search?q=site:wsj.com+when:3d&hl=en-US&gl=US&ceid=US:en",
+        ],
+    },
+    "ap": {
+        "label": "美联社",
+        "short": "AP",
+        "kind": "google_rss",
+        "home": "https://apnews.com/",
+        "accent": "#ff322e",
+        "story_limit": 50,
+        "show_publisher": False,
+        "feeds": [
+            "https://news.google.com/rss/search?q=site:apnews.com+when:3d&hl=en-US&gl=US&ceid=US:en",
+        ],
+    },
     "google": {
         "label": "Google News 美国",
         "short": "Google",
@@ -135,8 +159,8 @@ SOURCES = {
         ],
     },
     "google_zh": {
-        "label": "Google News 中文",
-        "short": "Google 中文",
+        "label": "Google News 中国",
+        "short": "Google 中国",
         "kind": "google_rss",
         "home": "https://news.google.com/topstories?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
         "accent": "#34a853",
@@ -168,15 +192,6 @@ SOURCES = {
         "accent": "#e60000",
         "story_limit": 30,
         "feeds": ["https://www.newyorker.com/feed/everything"],
-    },
-    "aeon": {
-        "label": "Aeon 深度",
-        "short": "Aeon",
-        "kind": "rss",
-        "home": "https://aeon.co/",
-        "accent": "#c45161",
-        "story_limit": 20,
-        "feeds": ["https://aeon.co/feed.rss"],
     },
     "mit_tech": {
         "label": "MIT 科技评论",
@@ -817,19 +832,25 @@ def parse_google_rss(source_key, meta, raw):
         publisher = child_text(item, "source")
         if not title or not link:
             continue
+        # Skip Google News section/index artifacts (e.g. WSJ "Print Edition").
+        if title.strip().lower().startswith("print edition"):
+            continue
         if publisher:
             for separator in (" - ", " | "):
                 suffix = f"{separator}{publisher}"
                 if title.endswith(suffix):
                     title = title[: -len(suffix)]
                     break
+        # Single-publisher feeds (e.g. AP) repeat the same publisher on every
+        # item, which is redundant with the column label — drop it there.
+        summary = publisher if meta.get("show_publisher", True) else ""
         items.append(
             make_item(
                 source_key,
                 meta,
                 title=title,
                 url=link,
-                summary=publisher,
+                summary=summary,
                 image=rss_image(item),
                 published_at=child_text(item, "pubDate"),
                 item_id=child_text(item, "guid") or link,

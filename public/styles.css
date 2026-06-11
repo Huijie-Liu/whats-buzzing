@@ -102,7 +102,8 @@ input {
 .brand {
   display: flex;
   align-items: center;
-  min-width: 180px;
+  flex: 1 1 0;
+  min-width: 0;
   gap: 10px;
 }
 
@@ -124,6 +125,7 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex: 1 1 0;
   gap: 10px;
   min-width: 0;
 }
@@ -236,15 +238,10 @@ h1 {
   flex-direction: column;
 }
 
-/* Centered segmented control sitting above the top bar. */
-.category-bar {
-  flex: 0 0 auto;
-  display: flex;
-  justify-content: center;
-  padding: 12px 14px 0;
-}
-
+/* Segmented control centered in the top bar (brand and actions flex:1
+   on each side push it to the middle). */
 .category-tabs {
+  flex: 0 0 auto;
   display: inline-grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
@@ -565,19 +562,6 @@ body.theme-dark .story.translating:not(.read) {
   text-underline-offset: 2px;
 }
 
-.original-title {
-  display: none;
-  margin: 2px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.35;
-  font-style: italic;
-}
-
-.story.translated .original-title {
-  display: block;
-}
-
 .summary {
   display: -webkit-box;
   overflow: hidden;
@@ -611,6 +595,26 @@ body.theme-dark .story.translating:not(.read) {
 
 .links a:hover {
   color: var(--ink);
+}
+
+.expand-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.expand-toggle:hover {
+  color: var(--ink);
+}
+
+/* Expanded state lifts the 2-line clamp to reveal the full summary. */
+.story.expanded .summary {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
 }
 
 .empty {
@@ -713,6 +717,23 @@ body.theme-dark .story.translating:not(.read) {
   animation: fade-up 0.18s ease both;
 }
 
+.preview-title {
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.preview-summary {
+  margin-top: 6px;
+  color: var(--summary-ink);
+}
+
+.preview-title + .preview-summary {
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
 .kbd-help {
   position: fixed;
   inset: 0;
@@ -807,6 +828,14 @@ body.theme-dark .story.translating:not(.read) {
 
   .category-tab {
     min-width: 0;
+  }
+}
+
+/* ---- Too narrow for one row: tabs drop to a full-width row below ---- */
+@media (max-width: 560px) {
+  .category-tabs {
+    order: 3;
+    flex-basis: 100%;
   }
 }
 

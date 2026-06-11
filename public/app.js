@@ -7,14 +7,15 @@ const SOURCE_GROUPS = [
 const SOURCES = [
   { key: "reuters", label: "路透社", accent: "#ff8000", group: "news" },
   { key: "bloomberg", label: "彭博社", accent: "#0068ff", group: "news" },
+  { key: "wsj", label: "华尔街日报", accent: "#333740", group: "news" },
+  { key: "ap", label: "美联社", accent: "#ff322e", group: "news" },
   { key: "hn", label: "Hacker News", accent: "#f0652f", group: "hot" },
   { key: "google", label: "Google News 美国", accent: "#1a73e8", group: "hot" },
-  { key: "google_zh", label: "Google News 中文", accent: "#34a853", group: "hot" },
+  { key: "google_zh", label: "Google News 中国", accent: "#34a853", group: "hot" },
   { key: "zhihu", label: "知乎热榜", accent: "#0066ff", group: "hot" },
   { key: "economist", label: "经济学人", accent: "#d71920", group: "analysis" },
   { key: "atlantic", label: "大西洋周刊", accent: "#111111", group: "analysis" },
   { key: "newyorker", label: "纽约客", accent: "#e60000", group: "analysis" },
-  { key: "aeon", label: "Aeon 深度", accent: "#c45161", group: "analysis" },
   { key: "mit_tech", label: "MIT 科技评论", accent: "#ff5a00", group: "analysis" },
 ];
 
@@ -30,10 +31,11 @@ const TRANSLATABLE_SOURCES = new Set([
   "economist",
   "reuters",
   "bloomberg",
+  "wsj",
+  "ap",
   "google",
   "atlantic",
   "newyorker",
-  "aeon",
   "mit_tech",
   "washingtonpost",
 ]);
@@ -152,7 +154,7 @@ function prepareItem(item, translationCache = {}) {
       titleOriginal: item.title || "",
       summaryOriginal: item.summary || "",
       titleZh: cached.titleZh,
-      summaryZh: cached.summaryZh || "",
+      summaryZh: item.summary ? (cached.summaryZh || "") : "",
       translationStatus: "done",
     };
   }
@@ -169,6 +171,9 @@ function displayTitle(item) {
 }
 
 function displaySummary(item) {
+  // No original summary → show nothing, even if a stale translation is
+  // cached (e.g. AP items that used to carry the publisher name).
+  if (!(item.summaryOriginal || item.summary)) return "";
   if (item.summaryZh) return item.summaryZh;
   return item.summaryOriginal || item.summary || "";
 }
@@ -337,24 +342,22 @@ function renderArticle(item) {
   }
   title.addEventListener("click", markCurrentRead);
 
-  const origTitle = (item.titleEn || item.titleOriginal || "").trim();
-  const shownTitle = displayTitle(item).trim();
-  const origEl = node.querySelector(".original-title");
-  if (origTitle && shownTitle && origTitle !== shownTitle) {
-    origEl.textContent = origTitle;
-    origEl.hidden = false;
-  } else {
-    origEl.hidden = true;
-  }
-
   const summary = node.querySelector(".summary");
   const summaryText = displaySummary(item);
   summary.textContent = escapeText(summaryText);
   summary.hidden = !summaryText;
 
-  const origin = node.querySelector(".origin");
-  origin.href = item.url || mainUrl;
-  origin.addEventListener("click", markCurrentRead);
+  // The former "原文" link is now an inline toggle that expands the summary
+  // from its 2-line clamp to the full text. Hidden when there's no summary.
+  const expandBtn = node.querySelector(".expand-toggle");
+  if (summaryText) {
+    expandBtn.addEventListener("click", () => {
+      const expanded = node.classList.toggle("expanded");
+      expandBtn.textContent = expanded ? "收起" : "展开";
+    });
+  } else {
+    expandBtn.remove();
+  }
 
   const discussion = node.querySelector(".discussion");
   if (item.discussionUrl && item.discussionUrl.startsWith("http") && item.discussionUrl !== mainUrl) {
@@ -376,18 +379,6 @@ function updateArticleNode(item, animate = false) {
   const title = node.querySelector(".title");
   const summary = node.querySelector(".summary");
   title.textContent = escapeText(displayTitle(item));
-
-  const origTitle = (item.titleEn || item.titleOriginal || "").trim();
-  const shownTitle = displayTitle(item).trim();
-  const origEl = node.querySelector(".original-title");
-  if (origEl) {
-    if (origTitle && shownTitle && origTitle !== shownTitle) {
-      origEl.textContent = origTitle;
-      origEl.hidden = false;
-    } else {
-      origEl.hidden = true;
-    }
-  }
 
   const summaryText = displaySummary(item);
   summary.textContent = escapeText(summaryText);
@@ -759,42 +750,55 @@ function removePreview() {
   }
 }
 
-async function showPreview(url, target) {
+// Hover shows the English original title + summary (only when it differs
+// from what's displayed, i.e. for translated items). The original text is
+// no longer shown inline under the translated title.
+function showOriginal(anchor) {
   removePreview();
-  const el = target;
-  previewTimer = setTimeout(async () => {
-    try {
-      const resp = await fetch(`/api/preview?url=${encodeURIComponent(url)}`);
-      if (!resp.ok) return;
-      const data = await resp.json();
-      const snippet = (data.snippet || "").trim();
-      if (!snippet) return;
+  const story = anchor.closest(".story");
+  const item = story && findItemById(story.dataset.itemId);
+  if (!item) return;
 
-      previewPopup = document.createElement("div");
-      previewPopup.className = "preview-popup";
-      previewPopup.textContent = snippet;
-      document.body.appendChild(previewPopup);
+  const origTitle = (item.titleEn || item.titleOriginal || "").trim();
+  const origSummary = (item.summaryOriginal || "").trim();
+  const hasTitle = origTitle && origTitle !== displayTitle(item).trim();
+  const hasSummary = origSummary && origSummary !== displaySummary(item).trim();
+  if (!hasTitle && !hasSummary) return;
 
-      const rect = el.getBoundingClientRect();
-      previewPopup.style.top = `${rect.bottom + 6}px`;
-      previewPopup.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 396))}px`;
-    } catch {
-      /* ignore preview failures */
+  previewTimer = setTimeout(() => {
+    previewPopup = document.createElement("div");
+    previewPopup.className = "preview-popup";
+    if (hasTitle) {
+      const t = document.createElement("div");
+      t.className = "preview-title";
+      t.textContent = origTitle;
+      previewPopup.appendChild(t);
     }
-  }, 400);
+    if (hasSummary) {
+      const s = document.createElement("div");
+      s.className = "preview-summary";
+      s.textContent = origSummary;
+      previewPopup.appendChild(s);
+    }
+    document.body.appendChild(previewPopup);
+
+    const rect = anchor.getBoundingClientRect();
+    previewPopup.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 396))}px`;
+    previewPopup.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - 40)}px`;
+  }, 350);
 }
 
 els.feed.addEventListener("mouseover", (e) => {
-  const link = e.target.closest(".title[href]");
-  if (!link || !link.href.startsWith("http")) {
+  const anchor = e.target.closest(".title, .summary");
+  if (!anchor) {
     removePreview();
     return;
   }
-  showPreview(link.href, link);
+  showOriginal(anchor);
 });
 
 els.feed.addEventListener("mouseout", (e) => {
-  if (e.target.closest(".title[href]")) removePreview();
+  if (e.target.closest(".title, .summary")) removePreview();
 });
 
 els.feed.addEventListener("scroll", removePreview, { capture: true, passive: true });
