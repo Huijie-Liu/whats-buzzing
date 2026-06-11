@@ -461,44 +461,85 @@ def _call_translation_api_stream(prompt):
     raise RuntimeError("翻译 API 未配置：请设置 DEEPSEEK_API_KEY 或 Claude DeepSeek 配置")
 
 
-def _build_summary_prompt(items):
-    """Build a prompt asking the AI to summarize a day's news."""
-    groups = {}
+def _build_summary_data(items):
+    """Number every item and build the prompt + a source lookup map.
+
+    Returns (prompt, sources) where *sources* is a dict mapping index
+    strings to {url, label, short, accent}.
+    """
+    numbered_lines = []
+    sources = {}
+    idx = 0
+
     for item in items:
-        source = item.get("source", "unknown")
-        title = item.get("title", "")
-        summary = item.get("summary", "")
+        title = (item.get("title") or "").strip()
         if not title:
             continue
-        groups.setdefault(source, []).append((title, summary))
+        source = item.get("source", "unknown")
+        meta = SOURCES.get(source, {})
+        label = meta.get("label", source)
+        summary = (item.get("summary") or "").strip()
 
-    lines = []
-    for source, entries in groups.items():
-        label = SOURCES.get(source, {}).get("label", source)
-        lines.append(f"\n【{label}】")
-        for title, summary in entries[:20]:  # cap per source
-            line = f"  - {title}"
-            if summary:
-                line += f"（{summary[:80]}）"
-            lines.append(line)
+        line = f"[{idx}] 【{label}】{title}"
+        if summary:
+            line += f" — {summary[:100]}"
+        numbered_lines.append(line)
 
-    numbered = "\n".join(lines)
+        sources[str(idx)] = {
+            "url": item.get("url") or item.get("discussionUrl") or "",
+            "label": label,
+            "short": meta.get("short", source),
+            "accent": meta.get("accent", "#191b1f"),
+        }
+        idx += 1
+
+    if not numbered_lines:
+        return "", {}
+
     today_str = datetime.now(timezone.utc).strftime("%Y年%m月%d日")
-    return (
-        f"你是一个专业新闻编辑。以下是{today_str}前后全球新闻标题汇总。"
-        f"请用中文写一个简短的今日要闻总结（300字以内），涵盖最重要的主题、趋势和值得关注的事件。"
-        f"不要逐条罗列，而是提炼要点，像新闻简报一样自然流畅。\n\n"
-        + numbered
+    prompt = (
+        f"你是一个专业新闻编辑。以下是{today_str}前后全球新闻标题汇总，每条新闻有唯一编号。\n\n"
+        + "\n".join(numbered_lines)
+        + "\n\n"
+        f"请用中文写一个简短的今日要闻总结（500字以内），按以下固定格式输出。\n\n"
+        f"格式要求：\n"
+        f"- 每个板块用 **板块名** 作为标题\n"
+        f"- 板块下每条要点用 \"- \" 开头分行列出\n"
+        f"- 每条要点末尾标注引用的新闻编号，如 [0]、[2][5]\n"
+        f"- 没有相关新闻的板块直接跳过\n\n"
+        f"板块顺序：\n"
+        f"1. **政治与安全** — 国际局势、冲突、选举、外交\n"
+        f"2. **经济与贸易** — 宏观经济、贸易政策、市场动向\n"
+        f"3. **科技与创新** — AI、航天、生物医药、互联网\n"
+        f"4. **商业与金融** — 企业动态、投融资、产业变迁\n"
+        f"5. **社会与生活** — 教育、医疗、环境、文化、体育\n"
+        f"6. **中国话题** — 所有与中国相关的新闻汇总（从前面各板块中提取与中国有关的内容，加上中国特有的新闻，集中展示）\n\n"
+        f"输出示例：\n"
+        f"**政治与安全**\n"
+        f"- 中东局势持续紧张，多国呼吁停火 [3][7]\n"
+        f"- 欧盟通过新数据保护法案 [12]\n\n"
+        f"**经济与贸易**\n"
+        f"- 美联储维持利率不变，通胀压力仍在 [0]\n\n"
+        f"【重要】严格遵循上述格式。每个要点必须带编号引用。整体像新闻简报一样自然流畅。"
     )
+    return prompt, sources
 
 
 def summary_events(items):
-    """Stream AI-generated daily news summary for the given items."""
+    """Stream AI-generated daily news summary for the given items.
+
+    The ``done`` event carries both ``text`` and ``sources`` (a dict
+    mapping citation index strings to article metadata).
+    """
     if not items:
         yield {"type": "error", "message": "没有可总结的内容"}
         return
 
-    prompt = _build_summary_prompt(items)
+    prompt, sources = _build_summary_data(items)
+    if not prompt:
+        yield {"type": "error", "message": "没有可总结的内容"}
+        return
+
     yield {"type": "start"}
 
     try:
@@ -507,7 +548,7 @@ def summary_events(items):
             buffer += chunk
             yield {"type": "chunk", "text": chunk}
 
-        yield {"type": "done", "text": buffer}
+        yield {"type": "done", "text": buffer, "sources": sources}
     except Exception as exc:
         yield {"type": "error", "message": str(exc)}
 

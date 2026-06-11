@@ -147,12 +147,46 @@ h1 {
 }
 
 .summary-button {
-  position: relative;
   color: #f0a030;
+  transition: color 0.22s ease, border-color 0.22s ease;
 }
 
 .summary-button:hover {
   color: #d4880c;
+}
+
+/* Loading: subtle border pulse, emoji untouched */
+.summary-button.summary-loading {
+  animation: summary-border-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes summary-border-pulse {
+  0%, 100% { border-color: var(--line); }
+  50% { border-color: #f0a030; }
+}
+
+/* Done: tiny green corner dot */
+.summary-button.summary-done {
+  position: relative;
+}
+
+.summary-button.summary-done::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34a853;
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+/* Brief green flash when loading finishes */
+.summary-button.summary-flash {
+  color: #34a853 !important;
+  border-color: #34a853;
+  transition: color 0.12s ease, border-color 0.12s ease;
 }
 
 /* ---- AI Summary Modal ---- */
@@ -241,18 +275,128 @@ h1 {
   border-top-color: #f0a030;
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
+  flex: 0 0 auto;
 }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
 
+/* Skeleton placeholder lines while loading */
+.summary-skeleton {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.summary-sk-line {
+  height: 14px;
+  border-radius: 4px;
+  background: var(--soft);
+  animation: skeleton-pulse 1.8s ease-in-out infinite;
+}
+
+.summary-sk-line.short { width: 60%; }
+.summary-sk-line.medium { width: 80%; }
+
+/* Streaming cursor blink */
+.summary-cursor {
+  display: inline;
+  color: #f0a030;
+  animation: cursor-blink 0.7s step-end infinite;
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Summary text content */
 .summary-text {
   color: var(--ink);
   font-size: 15px;
   line-height: 1.75;
-  white-space: pre-wrap;
   word-break: break-word;
+}
+
+.summary-text.summary-error {
+  color: var(--notice-ink);
+}
+
+/* Streaming text: preserve newlines as <br> */
+.summary-text.streaming {
+  white-space: normal;
+}
+
+/* Each major section (heading + bullet list) */
+.summary-section {
+  margin-bottom: 22px;
+}
+
+.summary-section:last-child {
+  margin-bottom: 0;
+}
+
+/* Section heading: **政治与安全** etc. */
+.summary-section strong {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 720;
+  color: var(--ink);
+}
+
+/* Bullet list under each section */
+.summary-section ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+  list-style: none;
+}
+
+.summary-section li {
+  position: relative;
+  padding-left: 2px;
+  margin-bottom: 5px;
+  color: var(--summary-ink);
+  line-height: 1.65;
+}
+
+.summary-section li::before {
+  content: "•";
+  position: absolute;
+  left: -16px;
+  color: var(--muted);
+}
+
+/* ---- Source citation badges ---- */
+
+.cite-cluster {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 2px;
+  vertical-align: middle;
+}
+
+.cite-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--cite-color, #888) 12%, transparent);
+  color: var(--cite-color, #888);
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: none;
+  transition: background 0.15s ease, transform 0.15s ease;
+  white-space: nowrap;
+}
+
+.cite-badge:hover {
+  background: var(--cite-color, #888);
+  color: #fff;
+  transform: translateY(-1px);
 }
 
 @keyframes pulse {

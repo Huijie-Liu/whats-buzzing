@@ -792,82 +792,223 @@ async function loadFeed() {
 els.theme.addEventListener("click", () => setTheme(state.theme === "dark" ? "light" : "dark"));
 
 /* ------------------------------------------------------------------ *
- *  AI 今日要闻总结
+ *  AI 今日要闻总结（后台加载 + 分类输出）
  * ------------------------------------------------------------------ */
 
 const summaryButton = document.querySelector("#summaryButton");
-let summaryAborter = null;
-let summaryModal = null;
+const summaryState = {
+  text: null,        // completed summary markdown text
+  loading: false,    // fetch in progress
+  error: null,       // error message
+  sources: {},       // citation index -> {url, label, short, accent}
+  aborter: null,     // AbortController for in-flight request
+  modal: null,       // current modal element (null when closed)
+};
 
 function buildSummaryPayload() {
   return state.items.map((item) => ({
     source: item.source,
     title: item.titleOriginal || item.title || "",
     summary: item.summaryOriginal || item.summary || "",
+    url: item.url || "",
+    discussionUrl: item.discussionUrl || "",
   }));
 }
 
-function removeSummaryModal() {
-  if (summaryAborter) {
-    summaryAborter.abort();
-    summaryAborter = null;
-  }
-  if (summaryModal) {
-    summaryModal.remove();
-    summaryModal = null;
+function updateSummaryButton() {
+  summaryButton.classList.toggle("summary-loading", summaryState.loading);
+  summaryButton.classList.toggle("summary-done", !summaryState.loading && !!summaryState.text);
+  if (summaryState.loading) {
+    summaryButton.setAttribute("aria-label", "AI 总结生成中...");
+    summaryButton.title = "AI 总结生成中...";
+  } else if (summaryState.text) {
+    summaryButton.setAttribute("aria-label", "AI 今日要闻总结（已完成）");
+    summaryButton.title = "AI 今日要闻总结（已完成）";
+  } else {
+    summaryButton.setAttribute("aria-label", "AI 总结今日要闻");
+    summaryButton.title = "AI 总结今日要闻";
   }
 }
 
-function showSummaryModal() {
-  removeSummaryModal();
+function dismissSummaryModal() {
+  if (summaryState.modal) {
+    summaryState.modal.remove();
+    summaryState.modal = null;
+  }
+  // Don't abort — loading continues in background
+}
 
-  summaryModal = document.createElement("div");
-  summaryModal.className = "summary-overlay";
-  summaryModal.innerHTML = `
+function buildSummaryModal() {
+  dismissSummaryModal();
+
+  const modal = document.createElement("div");
+  modal.className = "summary-overlay";
+  summaryState.modal = modal;
+
+  const statusIcon = summaryState.loading
+    ? '<span class="summary-spinner"></span>'
+    : summaryState.error
+      ? '⚠️'
+      : '✨';
+
+  const headerText = summaryState.loading
+    ? 'AI 正在生成今日要闻总结...'
+    : summaryState.error
+      ? '总结生成失败'
+      : 'AI 今日要闻总结';
+
+  modal.innerHTML = `
     <div class="summary-card">
       <div class="summary-card-header">
-        <span>✨ AI 今日要闻总结</span>
+        <span>${statusIcon} ${headerText}</span>
         <button class="summary-close" type="button" aria-label="关闭">✕</button>
       </div>
       <div class="summary-card-body">
-        <div class="summary-loading">
-          <span class="summary-spinner"></span>
-          <span>正在生成总结...</span>
-        </div>
+        ${buildSummaryBody()}
       </div>
     </div>
   `;
 
-  summaryModal.querySelector(".summary-close").addEventListener("click", removeSummaryModal);
-  summaryModal.addEventListener("click", (e) => {
-    if (e.target === summaryModal) removeSummaryModal();
+  modal.querySelector(".summary-close").addEventListener("click", dismissSummaryModal);
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) dismissSummaryModal();
   });
 
-  document.body.appendChild(summaryModal);
+  document.body.appendChild(modal);
 
-  const body = summaryModal.querySelector(".summary-card-body");
+  // Auto-scroll to bottom while streaming
+  if (summaryState.loading) {
+    const body = modal.querySelector(".summary-card-body");
+    const observer = new MutationObserver(() => {
+      body.scrollTop = body.scrollHeight;
+    });
+    observer.observe(body, { childList: true, characterData: true, subtree: true });
+    // Stop observing once loading completes
+    const check = setInterval(() => {
+      if (!summaryState.loading) { observer.disconnect(); clearInterval(check); }
+      if (!summaryState.modal) { observer.disconnect(); clearInterval(check); }
+    }, 500);
+  }
+
+  return modal;
+}
+
+function buildSummaryBody() {
+  if (summaryState.error) {
+    return `<div class="summary-text summary-error">${summaryState.error}</div>`;
+  }
+  if (summaryState.loading) {
+    const partial = summaryState.text || "";
+    return partial
+      ? `<div class="summary-text streaming">${escapeHtml(partial).replace(/\n/g, '<br>')}<span class="summary-cursor">|</span></div>`
+      : `<div class="summary-loading">
+           <span class="summary-spinner"></span>
+           <span>正在生成总结...</span>
+         </div>
+         <div class="summary-skeleton">
+           <div class="summary-sk-line"></div>
+           <div class="summary-sk-line short"></div>
+           <div class="summary-sk-line"></div>
+           <div class="summary-sk-line short"></div>
+           <div class="summary-sk-line medium"></div>
+         </div>`;
+  }
+  if (summaryState.text) {
+    return `<div class="summary-text">${renderSummaryMarkdown(summaryState.text)}</div>`;
+  }
+  return '<div class="summary-text">当前没有可总结的内容。</div>';
+}
+
+function renderSummaryMarkdown(text) {
+  // 1. Escape everything first
+  let html = escapeHtml(text);
+
+  // 2. Citations: [0] [1][2] -> inline badges
+  html = html.replace(/\[(\d+)\]/g, (_match, num) => {
+    const src = summaryState.sources[num];
+    if (!src || !src.url) return `[${num}]`;
+    const href = escapeHtml(src.url);
+    const color = escapeHtml(src.accent);
+    const title = escapeHtml(src.label);
+    const label = escapeHtml(src.short);
+    return `<a class="cite-badge" href="${href}" target="_blank" rel="noreferrer" style="--cite-color:${color}" title="${title}">${label}</a>`;
+  });
+
+  // 2b. Cluster consecutive badges (no newline matching — keep lines intact)
+  html = html.replace(/((?:<a class="cite-badge"[^>]*>.*?<\/a>[^\S\n]*)+)/g, '<span class="cite-cluster">$1</span>');
+
+  // 3. Bold: **text** -> <strong>text</strong>
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+  // 4. Split into sections by double-newline, process each
+  const sections = html.split(/\n\n+/);
+  const blocks = sections.map(section => {
+    section = section.trim();
+    if (!section) return '';
+
+    const lines = section.split(/\n/);
+
+    // First line is the heading (wrapped in <strong>)
+    const heading = lines[0].trim();
+    const bodyLines = lines.slice(1);
+
+    if (!bodyLines.length) {
+      // Just a heading, no bullet points
+      return `<div class="summary-section">${heading}</div>`;
+    }
+
+    // Process bullet lines: "- text..." -> <li>text...</li>
+    const items = bodyLines.map(line => {
+      const trimmed = line.trim();
+      // Strip leading "- " or "• "
+      const content = trimmed.replace(/^[-•]\s*/, '');
+      // Cluster consecutive badges inside the li
+      return `<li>${content}</li>`;
+    }).join('');
+
+    return `<div class="summary-section">${heading}<ul>${items}</ul></div>`;
+  });
+
+  return blocks.filter(Boolean).join('');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function openSummaryModal() {
+  buildSummaryModal();
+}
+
+function startSummaryFetch() {
+  if (summaryState.loading) return;
+
+  summaryState.loading = true;
+  summaryState.text = null;
+  summaryState.error = null;
+  updateSummaryButton();
+
   const payload = buildSummaryPayload();
-
   if (!payload.length) {
-    body.innerHTML = '<div class="summary-text">当前没有可总结的内容。</div>';
+    summaryState.loading = false;
+    summaryState.error = "当前没有可总结的内容。";
+    updateSummaryButton();
     return;
   }
 
-  summaryAborter = new AbortController();
+  summaryState.aborter = new AbortController();
 
   fetch("/api/summary", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ items: payload }),
-    signal: summaryAborter.signal,
+    signal: summaryState.aborter.signal,
   })
     .then(async (response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       if (!response.body) throw new Error("浏览器不支持流式响应");
-
-      // Replace loading with content area
-      body.innerHTML = '<div class="summary-text"></div>';
-      const textEl = body.querySelector(".summary-text");
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -884,12 +1025,18 @@ function showSummaryModal() {
           try {
             const event = JSON.parse(line);
             if (event.type === "chunk") {
-              textEl.textContent += event.text;
-              body.scrollTop = body.scrollHeight;
+              summaryState.text = (summaryState.text || "") + event.text;
+              // If modal is open, update it in-place
+              refreshModalBody();
             } else if (event.type === "done") {
-              textEl.textContent = event.text || textEl.textContent;
+              summaryState.text = event.text || summaryState.text;
+              if (event.sources) summaryState.sources = event.sources;
+              summaryState.loading = false;
+              updateSummaryButton();
+              refreshModalBody();
             } else if (event.type === "error") {
-              textEl.textContent = `总结生成失败：${event.message}`;
+              summaryState.error = `总结生成失败：${event.message}`;
+              refreshModalBody();
             }
           } catch { /* skip malformed */ }
         }
@@ -897,24 +1044,65 @@ function showSummaryModal() {
         if (done) break;
       }
 
-      if (!textEl.textContent.trim()) {
-        textEl.textContent = "总结生成失败，请稍后重试。";
+      if (!summaryState.text || !summaryState.text.trim()) {
+        summaryState.error = "总结生成失败，请稍后重试。";
       }
     })
     .catch((error) => {
       if (error.name !== "AbortError") {
-        body.innerHTML = `<div class="summary-text">请求失败：${error.message}</div>`;
+        summaryState.error = `请求失败：${error.message}`;
+      }
+    })
+    .finally(() => {
+      summaryState.loading = false;
+      summaryState.aborter = null;
+      updateSummaryButton();
+      refreshModalBody();
+      // Flash the button briefly to signal completion
+      if (summaryState.text && !summaryState.error) {
+        summaryButton.classList.add("summary-flash");
+        setTimeout(() => summaryButton.classList.remove("summary-flash"), 1200);
       }
     });
 }
 
-summaryButton.addEventListener("click", showSummaryModal);
+function refreshModalBody() {
+  if (!summaryState.modal) return;
+  const body = summaryState.modal.querySelector(".summary-card-body");
+  if (body) {
+    body.innerHTML = buildSummaryBody();
+  }
+  // Update header too
+  const header = summaryState.modal.querySelector(".summary-card-header span");
+  if (header) {
+    if (summaryState.loading) {
+      header.innerHTML = '<span class="summary-spinner"></span> AI 正在生成今日要闻总结...';
+    } else if (summaryState.error) {
+      header.textContent = '⚠️ 总结生成失败';
+    } else {
+      header.textContent = '✨ AI 今日要闻总结';
+    }
+  }
+}
+
+summaryButton.addEventListener("click", () => {
+  if (!summaryState.loading && !summaryState.text) {
+    // First click: start loading and open modal
+    startSummaryFetch();
+  }
+  // Always open (or re-open) the modal
+  openSummaryModal();
+});
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && summaryModal) {
-    removeSummaryModal();
+  if (e.key === "Escape" && summaryState.modal) {
+    dismissSummaryModal();
   }
 });
+
+// Refresh payload before starting — items may have changed since page load.
+// We grab state.items at fetch time, so clicking the button always uses
+// the latest loaded items.
 
 // Scrolling now happens inside the per-column lists (vertical) and the
 // board itself (horizontal), never on window. scroll events don't bubble
