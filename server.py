@@ -67,15 +67,6 @@ SOURCES = {
         "accent": "#f0652f",
         "story_limit": 50,
     },
-        "zhihu": {
-        "label": "知乎热榜",
-        "short": "Zhihu",
-        "kind": "zhihu",
-        "home": "https://www.zhihu.com/hot",
-        "accent": "#0066ff",
-        "story_limit": 50,
-        "translate": False,
-    },
     "economist": {
         "label": "经济学人",
         "short": "Economist",
@@ -334,50 +325,7 @@ def _save_translation_cache():
         pass
 
 
-def _translate_chunk(chunk: list[str], start_idx: int) -> dict[int, str]:
-    numbered = "\n\n".join(f"[{i + 1}] {t}" for i, t in enumerate(chunk))
-    prompt = (
-        "你是一个财经新闻翻译助手。请将以下编号的英文新闻标题或摘要翻译成简洁、地道的中文。"
-        "保持原意，不要添加解释。每个翻译用 [编号] 中文译文的格式输出。\n\n" + numbered
-    )
-    resp = _deepseek_client.chat.completions.create(
-        model=TRANSLATION_MODEL,
-        messages=[
-            {"role": "system", "content": "你是一个专业财经新闻翻译助手，翻译简洁准确。"},
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=4096,
-        temperature=0.1,
-    )
-    result = resp.choices[0].message.content or ""
-    parsed: dict[int, str] = {}
-    for line in result.strip().split("\n"):
-        m = re.match(r"\[(\d+)\]\s*(.+)", line.strip())
-        if m:
-            parsed[int(m.group(1)) - 1] = m.group(2).strip()
-    return parsed
-
-
-def translate_batch(texts: list[str]) -> list[str]:
-    if not _deepseek_client or not texts:
-        return texts
-    unique = list(dict.fromkeys(t for t in texts if t and t.strip()))
-    uncached = [t for t in unique if t not in _translation_cache]
-    if not uncached:
-        return [_translation_cache.get(t, t) for t in texts]
-
-    chunks = [uncached[i:i + 40] for i in range(0, len(uncached), 40)]
-    for chunk_idx, chunk in enumerate(chunks):
-        try:
-            parsed = _translate_chunk(chunk, chunk_idx * 40)
-        except Exception:
-            continue
-        for i, original in enumerate(chunk):
-            translated = parsed.get(i, original)
-            _translation_cache[original] = translated
-
-    _save_translation_cache()
-    return [_translation_cache.get(t, t) for t in texts]
+BATCH_SIZE = 15
 
 
 def should_translate_source(source_key):
@@ -394,161 +342,127 @@ def translation_cache_key(title, summary):
     return "item-v1:" + title + "\n\n" + summary
 
 
-def translation_prompt(title, summary):
-    body = f"标题：{title}"
-    if summary:
-        body += f"\n摘要：{summary}"
+def _build_batch_prompt(batch):
+    """Build a numbered prompt for batch translation."""
+    entries = []
+    for i, item in enumerate(batch):
+        entry = f"[{i}] 标题：{item['title']}"
+        if item.get("summary"):
+            entry += f"\n摘要：{item['summary']}"
+        entries.append(entry)
+    numbered = "\n\n".join(entries)
     return (
-        "请将下面的英文新闻翻译成简洁、地道的中文，保持原意，不要添加解释。"
-        "只输出 JSON，不要 Markdown，不要代码块。JSON 格式必须是："
-        '{"title":"中文标题","summary":"中文摘要"}。'
-        "如果没有摘要，summary 输出空字符串。\n\n"
-        + body
+        "你是一个专业新闻翻译助手。请将以下编号的英文新闻标题和摘要翻译成简洁、地道的中文。"
+        "对每条新闻输出一行，格式必须严格为：\n"
+        '[编号] {"title":"中文标题","summary":"中文摘要"}\n'
+        "如果没有摘要，summary 输出空字符串。不要输出任何其他内容。\n\n"
+        + numbered
     )
 
 
-def parse_translation_json(raw, fallback_title, fallback_summary):
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
-
-    match = re.search(r"\{.*\}", raw, re.S)
-    if match:
-        try:
-            parsed = json.loads(match.group(0))
-            title = text(parsed.get("title")) or fallback_title
-            summary = text(parsed.get("summary")) if fallback_summary else ""
-            return {"title": title, "summary": summary}
-        except (TypeError, json.JSONDecodeError):
-            pass
-
-    title_match = re.search(r"标题[:：]\s*(.+)", raw)
-    summary_match = re.search(r"摘要[:：]\s*(.+)", raw)
-    return {
-        "title": text(title_match.group(1)) if title_match else text(raw) or fallback_title,
-        "summary": text(summary_match.group(1)) if summary_match and fallback_summary else "",
-    }
-
-
-def request_json_stream(url, headers, payload):
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            for raw_line in response:
-                line = raw_line.decode("utf-8", "replace").strip()
-                if not line or line.startswith(":") or not line.startswith("data:"):
-                    continue
-                event_data = line[5:].strip()
-                if event_data == "[DONE]":
-                    break
-                try:
-                    yield json.loads(event_data)
-                except json.JSONDecodeError:
-                    continue
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")
-        detail = " ".join(detail.split())[:500]
-        raise RuntimeError(f"DeepSeek 翻译请求失败 HTTP {exc.code}: {detail}") from exc
-
-
-def stream_openai_compatible_translation(title, summary):
-    url = DEEPSEEK_BASE_URL.rstrip("/") + "/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": TRANSLATION_MODEL,
-        "messages": [
-            {"role": "system", "content": "你是一个专业新闻翻译助手，翻译简洁准确。"},
-            {"role": "user", "content": translation_prompt(title, summary)},
-        ],
-        "max_tokens": 1200,
-        "temperature": 0.1,
-        "stream": True,
-    }
-    for event in request_json_stream(url, headers, payload):
-        choices = event.get("choices") or []
-        if not choices:
-            continue
-        delta = choices[0].get("delta") or {}
-        content = delta.get("content", "")
-        if content:
-            yield content
-
-
-def anthropic_messages_url(base_url):
-    base_url = base_url.rstrip("/")
-    if base_url.endswith("/v1"):
-        return base_url + "/messages"
-    return base_url + "/v1/messages"
-
-
-def stream_anthropic_compatible_translation(title, summary):
-    url = anthropic_messages_url(CLAUDE_DEEPSEEK["base_url"])
-    headers = {
-        "Authorization": f"Bearer {CLAUDE_DEEPSEEK['token']}",
-        "Content-Type": "application/json",
-        "anthropic-version": "2023-06-01",
-    }
-    payload = {
-        "model": TRANSLATION_MODEL,
-        "system": "你是一个专业新闻翻译助手，翻译简洁准确。",
-        "messages": [{"role": "user", "content": translation_prompt(title, summary)}],
-        "max_tokens": 1200,
-        "temperature": 0.1,
-        "stream": True,
-    }
-    for event in request_json_stream(url, headers, payload):
-        event_type = event.get("type")
-        if event_type == "content_block_delta":
-            delta = event.get("delta") or {}
-            content = delta.get("text", "")
-            if content:
-                yield content
-            continue
-
-        choices = event.get("choices") or []
-        if choices:
-            delta = choices[0].get("delta") or {}
-            content = delta.get("content", "")
-            if content:
-                yield content
-
-
-def stream_deepseek_translation(title, summary):
+def _call_translation_api_stream(prompt):
+    """Call the translation API with streaming. Yields text chunks for real-time parsing."""
     if DEEPSEEK_KEY:
-        yield from stream_openai_compatible_translation(title, summary)
+        client = openai.OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_BASE_URL)
+        stream = client.chat.completions.create(
+            model=TRANSLATION_MODEL,
+            messages=[
+                {"role": "system", "content": "你是一个专业新闻翻译助手，翻译简洁准确。"},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=4096,
+            temperature=0.1,
+            stream=True,
+        )
+        for chunk in stream:
+            content = None
+            if chunk.choices:
+                delta = getattr(chunk.choices[0], "delta", None)
+                if delta is not None:
+                    content = getattr(delta, "content", "")
+            if content:
+                yield content
         return
+
     if CLAUDE_DEEPSEEK.get("token"):
-        yield from stream_anthropic_compatible_translation(title, summary)
+        base = CLAUDE_DEEPSEEK["base_url"].rstrip("/")
+        if base.endswith("/v1"):
+            url = base + "/messages"
+        else:
+            url = base + "/v1/messages"
+        headers = {
+            "Authorization": f"Bearer {CLAUDE_DEEPSEEK['token']}",
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01",
+        }
+        payload = {
+            "model": TRANSLATION_MODEL,
+            "system": "你是一个专业新闻翻译助手，翻译简洁准确。",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 4096,
+            "temperature": 0.1,
+            "stream": True,
+        }
+        data_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", "replace").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    event_data = line[5:].strip()
+                    if event_data == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(event_data)
+                    except json.JSONDecodeError:
+                        continue
+                    # Anthropic format
+                    if event.get("type") == "content_block_delta":
+                        text = (event.get("delta") or {}).get("text", "")
+                        if text:
+                            yield text
+                        continue
+                    # OpenAI-compatible format (fallback)
+                    choices = event.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta") or {}
+                        text = delta.get("content", "")
+                        if text:
+                            yield text
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")
+            detail = " ".join(detail.split())[:500]
+            raise RuntimeError(f"翻译请求失败 HTTP {exc.code}: {detail}") from exc
         return
+
     if _deepseek_client:
         stream = _deepseek_client.chat.completions.create(
             model=TRANSLATION_MODEL,
             messages=[
                 {"role": "system", "content": "你是一个专业新闻翻译助手，翻译简洁准确。"},
-                {"role": "user", "content": translation_prompt(title, summary)},
+                {"role": "user", "content": prompt},
             ],
-            max_tokens=1200,
+            max_tokens=4096,
             temperature=0.1,
             stream=True,
         )
         for chunk in stream:
-            choices = getattr(chunk, "choices", None) or []
-            if not choices:
-                continue
-            delta = getattr(choices[0], "delta", None)
-            content = getattr(delta, "content", "") if delta is not None else ""
+            content = None
+            if chunk.choices:
+                delta = getattr(chunk.choices[0], "delta", None)
+                if delta is not None:
+                    content = getattr(delta, "content", "")
             if content:
                 yield content
         return
-    raise RuntimeError("DeepSeek API 未配置：请设置 DEEPSEEK_API_KEY 或 Claude DeepSeek 配置")
+
+    raise RuntimeError("翻译 API 未配置：请设置 DEEPSEEK_API_KEY 或 Claude DeepSeek 配置")
 
 
 def translation_events(items):
+    candidates = []
     for item in items[:50]:
         item_id = text(item.get("id"))
         source_key = text(item.get("source"))
@@ -556,54 +470,105 @@ def translation_events(items):
         summary = text(translatable_summary(source_key, item.get("summary", "")))
         if not item_id or not title or not should_translate_source(source_key):
             continue
+        candidates.append({
+            "id": item_id,
+            "source": source_key,
+            "title": title,
+            "summary": summary,
+        })
 
-        yield {"type": "start", "id": item_id}
-        cache_key = translation_cache_key(title, summary)
+    if not candidates:
+        yield {"type": "complete"}
+        return
+
+    # Serve from cache first
+    uncached = []
+    for c in candidates:
+        cache_key = translation_cache_key(c["title"], c["summary"])
         cached = _translation_cache.get(cache_key)
         if cached:
             try:
-                yield {"type": "done", "id": item_id, **json.loads(cached)}
-                continue
+                yield {"type": "done", "id": c["id"], **json.loads(cached)}
             except (TypeError, json.JSONDecodeError):
-                pass
+                uncached.append(c)
+        else:
+            uncached.append(c)
 
-        raw = ""
+    if not uncached:
+        yield {"type": "complete"}
+        return
+
+    # Batch uncached items, stream the response, emit each result as it arrives
+    batches = [uncached[i:i + BATCH_SIZE] for i in range(0, len(uncached), BATCH_SIZE)]
+
+    for batch in batches:
+        for item in batch:
+            yield {"type": "start", "id": item["id"]}
+
         try:
-            for delta in stream_deepseek_translation(title, summary):
-                raw += delta
-                yield {"type": "chunk", "id": item_id, "delta": delta}
-            translated = parse_translation_json(raw, title, summary)
-            _translation_cache[cache_key] = json.dumps(translated, ensure_ascii=False)
+            prompt = _build_batch_prompt(batch)
+            buffer = ""
+            done_indices = set()
+
+            for chunk in _call_translation_api_stream(prompt):
+                buffer += chunk
+                # Parse complete lines from the stream
+                *complete_lines, buffer = buffer.split("\n")
+                for line in complete_lines:
+                    m = re.match(r"\[(\d+)\]\s*(\{.*\})", line.strip())
+                    if not m:
+                        continue
+                    idx = int(m.group(1))
+                    if idx in done_indices or idx >= len(batch):
+                        continue
+                    try:
+                        obj = json.loads(m.group(2))
+                        translated = {
+                            "title": text(obj.get("title", "")),
+                            "summary": text(obj.get("summary", "")),
+                        }
+                    except json.JSONDecodeError:
+                        continue
+                    item = batch[idx]
+                    cache_key = translation_cache_key(item["title"], item["summary"])
+                    _translation_cache[cache_key] = json.dumps(translated, ensure_ascii=False)
+                    yield {"type": "done", "id": item["id"], **translated}
+                    done_indices.add(idx)
+
+            # Handle any remaining buffer content
+            if buffer.strip():
+                m = re.match(r"\[(\d+)\]\s*(\{.*\})", buffer.strip())
+                if m:
+                    idx = int(m.group(1))
+                    if idx not in done_indices and idx < len(batch):
+                        try:
+                            obj = json.loads(m.group(2))
+                            translated = {
+                                "title": text(obj.get("title", "")),
+                                "summary": text(obj.get("summary", "")),
+                            }
+                            item = batch[idx]
+                            cache_key = translation_cache_key(item["title"], item["summary"])
+                            _translation_cache[cache_key] = json.dumps(translated, ensure_ascii=False)
+                            yield {"type": "done", "id": item["id"], **translated}
+                            done_indices.add(idx)
+                        except json.JSONDecodeError:
+                            pass
+
+            # Fallback for any items the model missed
+            for i, item in enumerate(batch):
+                if i not in done_indices:
+                    translated = {"title": item["title"], "summary": item["summary"]}
+                    cache_key = translation_cache_key(item["title"], item["summary"])
+                    _translation_cache[cache_key] = json.dumps(translated, ensure_ascii=False)
+                    yield {"type": "done", "id": item["id"], **translated}
+
             _save_translation_cache()
-            yield {"type": "done", "id": item_id, **translated}
         except Exception as exc:
-            yield {"type": "error", "id": item_id, "message": str(exc)}
+            for item in batch:
+                yield {"type": "error", "id": item["id"], "message": str(exc)}
 
-
-def translate_items(items: list[dict]) -> list[dict]:
-    if not _deepseek_client or not items:
-        return items
-    texts: list[str] = []
-    indices: list[int] = []
-    for i, item in enumerate(items):
-        if "titleEn" in item:
-            continue
-        if not SOURCES.get(item.get("source"), {}).get("translate", True):
-            continue
-        texts.append(item.get("title", ""))
-        texts.append(item.get("summary", ""))
-        indices.append(i)
-    if not texts:
-        return items
-    translated = translate_batch(texts)
-    for j, i in enumerate(indices):
-        item = items[i]
-        item["titleEn"] = item.get("title", "")
-        item["summaryEn"] = item.get("summary", "")
-        item["title"] = translated[j * 2] or item["title"]
-        if item.get("source") != "hn":
-            item["summary"] = translated[j * 2 + 1] or item.get("summary", "")
-    return items
+    yield {"type": "complete"}
 
 
 _load_translation_cache()
@@ -960,39 +925,6 @@ def fetch_feed_collection(source_key, parser):
     return source_payload(source_key, items, latest)
 
 
-def fetch_zhihu(source_key):
-    meta = SOURCES[source_key]
-    target = meta.get("story_limit", 50)
-    raw = json.loads(
-        fetch_url(
-            f"https://api.zhihu.com/topstory/hot-lists/total?limit={target}",
-            "application/json",
-        ).decode("utf-8")
-    )
-    items = []
-    for entry in raw.get("data", []):
-        t = entry.get("target", {})
-        if not t.get("title"):
-            continue
-        qid = str(t.get("id", ""))
-        web_url = f"https://www.zhihu.com/question/{qid}" if qid else ""
-        items.append(
-            make_item(
-                source_key,
-                meta,
-                title=t["title"],
-                url=web_url,
-                summary=t.get("excerpt", ""),
-                published_at=datetime.fromtimestamp(t.get("created", 0), timezone.utc).isoformat(),
-                item_id=qid,
-                score=t.get("answer_count"),
-                comments=t.get("follower_count"),
-                discussion_url=web_url,
-            )
-        )
-    return source_payload(source_key, items[:target], iso_now())
-
-
 def fetch_hn(source_key):
     meta = SOURCES[source_key]
     target = meta.get("story_limit", 50)
@@ -1096,8 +1028,6 @@ def fetch_source(source_key):
         payload = fetch_zhihu(source_key)
     elif kind == "hn":
         payload = fetch_hn(source_key)
-    elif kind == "zhihu":
-        payload = fetch_zhihu(source_key)
     elif kind == "rss":
         payload = fetch_feed_collection(source_key, parse_rss)
     elif kind == "google_rss":
@@ -1277,7 +1207,6 @@ def create_flask_app():
             clean_items = [item for item in items if isinstance(item, dict)]
             for event in translation_events(clean_items):
                 yield json.dumps(event, ensure_ascii=False) + "\n"
-            yield json.dumps({"type": "complete"}, ensure_ascii=False) + "\n"
 
         return Response(
             stream_with_context(generate()),
@@ -1418,8 +1347,6 @@ class Handler(BaseHTTPRequestHandler):
             line = json.dumps(event, ensure_ascii=False).encode("utf-8") + b"\n"
             self.wfile.write(line)
             self.wfile.flush()
-        self.wfile.write(json.dumps({"type": "complete"}).encode("utf-8") + b"\n")
-        self.wfile.flush()
 
     def do_OPTIONS(self):
         self.send_response(204)

@@ -323,13 +323,8 @@ function renderArticle(item) {
   if (item.publishedAt) time.dateTime = item.publishedAt;
 
   const hnStat = node.querySelector(".hn-stat");
-  if (item.source === "hn") {
-    const score = Number.isFinite(Number(item.score)) ? `${item.score} points` : "";
-    const comments = Number.isFinite(Number(item.comments)) ? `${item.comments} comments` : "";
-    hnStat.textContent = [score, comments].filter(Boolean).join(" · ");
-  } else {
-    hnStat.remove();
-  }
+  // HN stats live in the bottom-right corner, not in the meta row
+  hnStat.remove();
 
   const title = node.querySelector(".title");
   title.href = mainUrl;
@@ -347,16 +342,23 @@ function renderArticle(item) {
   summary.textContent = escapeText(summaryText);
   summary.hidden = !summaryText;
 
-  // The former "原文" link is now an inline toggle that expands the summary
-  // from its 2-line clamp to the full text. Hidden when there's no summary.
+  const links = node.querySelector(".links");
+  // Always strip the template's expand toggle; re-added post-render
+  // only for summaries that genuinely overflow the 2-line clamp.
   const expandBtn = node.querySelector(".expand-toggle");
-  if (summaryText) {
-    expandBtn.addEventListener("click", () => {
-      const expanded = node.classList.toggle("expanded");
-      expandBtn.textContent = expanded ? "收起" : "展开";
-    });
-  } else {
-    expandBtn.remove();
+  if (expandBtn) expandBtn.remove();
+
+  // HN: stats pinned to the bottom-right corner
+  if (item.source === "hn") {
+    const score = Number.isFinite(Number(item.score)) ? `${item.score} points` : "";
+    const comments = Number.isFinite(Number(item.comments)) ? `${item.comments} comments` : "";
+    const statText = [score, comments].filter(Boolean).join(" · ");
+    if (statText) {
+      const stat = document.createElement("span");
+      stat.className = "hn-stat";
+      stat.textContent = statText;
+      links.appendChild(stat);
+    }
   }
 
   const discussion = node.querySelector(".discussion");
@@ -383,6 +385,11 @@ function updateArticleNode(item, animate = false) {
   const summaryText = displaySummary(item);
   summary.textContent = escapeText(summaryText);
   summary.hidden = !summaryText;
+
+  // Re-evaluate expand button after summary content changes
+  const oldBtn = node.querySelector(".expand-toggle");
+  if (oldBtn) oldBtn.remove();
+  addExpandButtons();
 
   if (animate) {
     node.classList.remove("translation-swap");
@@ -511,6 +518,7 @@ function translateBatch(batch) {
 }
 
 function startTranslationsForVisibleItems() {
+  // Cancel any in-flight translation and restart with only what's in view
   translationRunId += 1;
   if (translationController) {
     translationController.abort();
@@ -523,8 +531,7 @@ function startTranslationsForVisibleItems() {
   if (!pending.length) return;
 
   const visible = pending.filter((item) => visibleIds.has(item.id));
-  const buffer = pending.filter((item) => !visibleIds.has(item.id)).slice(0, VISIBLE_BUFFER);
-  translateBatch([...visible, ...buffer]);
+  translateBatch(visible);
 }
 
 let scrollTimer = null;
@@ -533,23 +540,21 @@ let pendingQueue = [];
 function onScrollTranslate() {
   if (scrollTimer) clearTimeout(scrollTimer);
   scrollTimer = setTimeout(() => {
+    // If a translation is in flight, queue newly-visible items to pick up
+    // after it finishes — don't cancel mid-stream.
+    if (translationController) return;
+
     const visibleIds = getVisibleItemIds();
     const pending = displayedItems().filter(shouldTranslateItem);
     const needsWork = pending.filter((item) => visibleIds.has(item.id));
     if (!needsWork.length) return;
 
-    if (translationController) {
-      pendingQueue = [...new Set([...pendingQueue, ...needsWork.map(i => i.id)])];
-      return;
-    }
-
-    const buffer = pending.filter((item) => !visibleIds.has(item.id)).slice(0, VISIBLE_BUFFER);
-    translateBatch([...needsWork, ...buffer]);
-  }, 300);
+    translateBatch(needsWork);
+  }, 250);
 }
 
 function drainPendingQueue() {
-  if (!pendingQueue.length) return;
+  if (!pendingQueue.length || translationController) return;
   const ids = new Set(pendingQueue);
   pendingQueue = [];
   const items = displayedItems().filter(item => ids.has(item.id) && shouldTranslateItem(item));
@@ -622,9 +627,41 @@ function renderErrors(errors = []) {
   els.error.textContent = `部分来源暂时不可用：${names.join("、")}`;
 }
 
+function addExpandButtons() {
+  // Defer until after the browser lays out the new cards so
+  // scrollHeight / clientHeight reflect the clamped summary.
+  requestAnimationFrame(() => {
+    els.feed.querySelectorAll(".story .summary").forEach((summary) => {
+      if (!summary.textContent.trim()) return;
+      const story = summary.closest(".story");
+      if (!story || story.querySelector(".expand-toggle")) return;
+      // +1 px tolerance — only show the button when the text
+      // genuinely overflows the 2-line clamp.
+      if (summary.scrollHeight <= summary.clientHeight + 1) return;
+
+      const btn = document.createElement("button");
+      btn.className = "expand-toggle";
+      btn.type = "button";
+      btn.textContent = "展开";
+      btn.addEventListener("click", () => {
+        const expanded = story.classList.toggle("expanded");
+        btn.textContent = expanded ? "收起" : "展开";
+      });
+      const links = story.querySelector(".links");
+      const discussion = links.querySelector(".discussion");
+      if (discussion) {
+        links.insertBefore(btn, discussion);
+      } else {
+        links.appendChild(btn);
+      }
+    });
+  });
+}
+
 function render() {
   renderCategoryTabs();
   renderColumns();
+  addExpandButtons();
 }
 
 async function loadFeed() {
