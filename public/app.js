@@ -9,10 +9,10 @@ const SOURCES = [
   { key: "bloomberg", label: "彭博社", accent: "#0068ff", group: "news" },
   { key: "wsj", label: "华尔街日报", accent: "#333740", group: "news" },
   { key: "ap", label: "美联社", accent: "#ff322e", group: "news" },
+  { key: "zhihu", label: "知乎热榜", accent: "#0066ff", group: "hot" },
   { key: "hn", label: "Hacker News", accent: "#f0652f", group: "hot" },
   { key: "google", label: "Google News 美国", accent: "#1a73e8", group: "hot" },
   { key: "google_zh", label: "Google News 中国", accent: "#34a853", group: "hot" },
-  { key: "zhihu", label: "知乎热榜", accent: "#0066ff", group: "hot" },
   { key: "economist", label: "经济学人", accent: "#d71920", group: "analysis" },
   { key: "atlantic", label: "大西洋周刊", accent: "#111111", group: "analysis" },
   { key: "newyorker", label: "纽约客", accent: "#e60000", group: "analysis" },
@@ -62,7 +62,6 @@ const state = {
   activeGroup: initialSourceGroup(),
   items: [],
   sourceCounts: new Map(),
-  query: "",
   withImages: true,
   theme: localStorage.getItem(THEME_STORAGE_KEY) || "light",
   loading: false,
@@ -75,9 +74,6 @@ const els = {
   categoryTabs: document.querySelector("#categoryTabs"),
   feed: document.querySelector("#feed"),
   error: document.querySelector("#errorBox"),
-  search: document.querySelector("#searchInput"),
-  searchBox: document.querySelector(".search-box"),
-  searchToggle: document.querySelector("#searchToggle"),
   theme: document.querySelector("#themeButton"),
   template: document.querySelector("#articleTemplate"),
 };
@@ -259,18 +255,12 @@ function renderCategoryTabs() {
   });
 }
 
-function matchesQuery(item, query) {
-  if (!query) return true;
-  return `${item.titleOriginal} ${item.summaryOriginal} ${item.titleZh || ""} ${item.summaryZh || ""} ${item.sourceLabel}`.toLowerCase().includes(query);
-}
-
 // One entry per source in the active group, each carrying its own items
 // sorted newest-first. This drives the column board.
 function groupColumns() {
-  const query = state.query.trim().toLowerCase();
   return activeGroupSources().map((source) => {
     const items = state.items
-      .filter((item) => item.source === source.key && matchesQuery(item, query))
+      .filter((item) => item.source === source.key)
       .sort((a, b) => (b.publishedAt || "").localeCompare(a.publishedAt || ""))
       .slice(0, MAX_ITEMS_PER_TAB);
     return { source: source.key, label: source.label, accent: source.accent, items };
@@ -288,8 +278,10 @@ function renderArticle(item) {
   const mainUrl = item.url || item.discussionUrl || "#";
   const hasImage = state.withImages && Boolean(item.image);
   const markCurrentRead = () => markRead(item, node);
+  const sourceKey = item.source || "";
 
   node.dataset.itemId = item.id || "";
+  node.classList.add(`story-${sourceKey}`);
   node.classList.toggle("has-image", hasImage);
   node.classList.toggle("read", state.readIds.has(item.id));
   node.classList.toggle("translating", item.translationStatus === "streaming" || item.translationStatus === "queued");
@@ -315,7 +307,7 @@ function renderArticle(item) {
 
   const srcEl = node.querySelector(".source");
   srcEl.textContent = item.sourceLabel;
-  const srcHome = sourceMeta(item.source)?.home || "#";
+  const srcHome = sourceMeta(sourceKey)?.home || "#";
   if (srcHome !== "#") srcEl.href = srcHome;
 
   const time = node.querySelector("time");
@@ -323,7 +315,6 @@ function renderArticle(item) {
   if (item.publishedAt) time.dateTime = item.publishedAt;
 
   const hnStat = node.querySelector(".hn-stat");
-  // HN stats live in the bottom-right corner, not in the meta row
   hnStat.remove();
 
   const title = node.querySelector(".title");
@@ -343,26 +334,81 @@ function renderArticle(item) {
   summary.hidden = !summaryText;
 
   const links = node.querySelector(".links");
-  // Always strip the template's expand toggle; re-added post-render
-  // only for summaries that genuinely overflow the 2-line clamp.
   const expandBtn = node.querySelector(".expand-toggle");
   if (expandBtn) expandBtn.remove();
 
-  // HN: stats pinned to the bottom-right corner
-  if (item.source === "hn") {
-    const score = Number.isFinite(Number(item.score)) ? `${item.score} points` : "";
-    const comments = Number.isFinite(Number(item.comments)) ? `${item.comments} comments` : "";
-    const statText = [score, comments].filter(Boolean).join(" · ");
-    if (statText) {
-      const stat = document.createElement("span");
-      stat.className = "hn-stat";
-      stat.textContent = statText;
-      links.appendChild(stat);
+  // ---- Source-specific features ----
+
+  // HN: prominent stats badges (points, comments) + author.
+  // The comments badge doubles as the discussion link — no separate "讨论".
+  if (sourceKey === "hn") {
+    const statsEl = document.createElement("div");
+    statsEl.className = "card-stats";
+
+    const score = Number.isFinite(Number(item.score)) ? Number(item.score) : null;
+    const comments = Number.isFinite(Number(item.comments)) ? Number(item.comments) : null;
+    const discUrl = item.discussionUrl || mainUrl;
+
+    if (score !== null) {
+      const points = document.createElement("span");
+      points.className = "stat-badge points";
+      points.textContent = `▲ ${score}`;
+      statsEl.appendChild(points);
+    }
+    if (comments !== null) {
+      const commLink = document.createElement("a");
+      commLink.className = "stat-badge comments";
+      commLink.href = discUrl;
+      commLink.target = "_blank";
+      commLink.rel = "noreferrer";
+      commLink.textContent = `💬 ${comments}`;
+      commLink.addEventListener("click", markCurrentRead);
+      statsEl.appendChild(commLink);
+    }
+    // Author (stored in summary by server)
+    const author = (item.summaryOriginal || "").trim();
+    if (author && !/^\d/.test(author)) {
+      const auth = document.createElement("span");
+      auth.className = "stat-badge author";
+      auth.textContent = author;
+      statsEl.appendChild(auth);
+    }
+
+    if (statsEl.children.length) {
+      links.insertAdjacentElement("beforebegin", statsEl);
+    }
+  }
+
+  // Zhihu: heat badge instead of time
+  if (sourceKey === "zhihu") {
+    if (item.score && item.score > 0) {
+      const statsEl = document.createElement("div");
+      statsEl.className = "card-stats";
+      const heat = document.createElement("span");
+      heat.className = "stat-badge heat";
+      const heatStr = item.score >= 10000
+        ? `${(item.score / 10000).toFixed(1)} 万热度`
+        : `${item.score} 热度`;
+      heat.textContent = `🔥 ${heatStr}`;
+      statsEl.appendChild(heat);
+      links.insertAdjacentElement("beforebegin", statsEl);
+    }
+  }
+
+  // Google News: publisher badge in meta
+  if (sourceKey === "google" || sourceKey === "google_zh") {
+    const publisher = (item.summaryOriginal || "").trim();
+    if (publisher && publisher.length < 40) {
+      const pubBadge = document.createElement("span");
+      pubBadge.className = "publisher-badge";
+      pubBadge.textContent = publisher;
+      srcEl.after(pubBadge);
     }
   }
 
   const discussion = node.querySelector(".discussion");
-  if (item.discussionUrl && item.discussionUrl.startsWith("http") && item.discussionUrl !== mainUrl) {
+  // HN: the comments badge already links to the discussion — remove the text link.
+  if (item.discussionUrl && item.discussionUrl.startsWith("http") && item.discussionUrl !== mainUrl && sourceKey !== "hn") {
     discussion.href = item.discussionUrl;
     discussion.addEventListener("click", markCurrentRead);
   } else {
@@ -581,7 +627,7 @@ function renderColumnBody(column) {
   if (!column.items.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = state.query.trim() ? "没有匹配的内容" : "暂无内容";
+    empty.textContent = "暂无内容";
     return empty;
   }
   const fragment = document.createDocumentFragment();
@@ -722,33 +768,6 @@ async function loadFeed() {
   }
 }
 
-els.search.addEventListener("input", (event) => {
-  state.query = event.target.value;
-  renderColumns();
-  startTranslationsForVisibleItems();
-});
-
-// Search is collapsed to a magnifier by default; the toggle expands the
-// input and focuses it. An empty field collapses again when it loses focus.
-function expandSearch() {
-  els.searchBox.classList.add("expanded");
-  els.searchToggle.setAttribute("aria-expanded", "true");
-  els.search.focus();
-}
-
-function collapseSearchIfEmpty() {
-  if (!els.search.value.trim()) {
-    els.searchBox.classList.remove("expanded");
-    els.searchToggle.setAttribute("aria-expanded", "false");
-  }
-}
-
-els.searchToggle.addEventListener("click", () => {
-  if (els.searchBox.classList.contains("expanded")) collapseSearchIfEmpty();
-  else expandSearch();
-});
-els.search.addEventListener("blur", collapseSearchIfEmpty);
-
 els.theme.addEventListener("click", () => setTheme(state.theme === "dark" ? "light" : "dark"));
 
 // Scrolling now happens inside the per-column lists (vertical) and the
@@ -846,7 +865,7 @@ els.feed.addEventListener("scroll", removePreview, { capture: true, passive: tru
  *  The current selection is tracked by article id (`vim.selectedId`),
  *  never by a cached DOM node or index. This is the key to being
  *  bug-free: the feed is rebuilt on nearly every interaction (filter,
- *  sort, theme, translation, search), so any node/index reference goes
+ *  sort, theme, translation), so any node/index reference goes
  *  stale instantly. Resolving the id against the live DOM on each use
  *  keeps navigation correct across every re-render.
  * ------------------------------------------------------------------ */
@@ -1005,7 +1024,6 @@ function toggleHelp() {
     ["[ / ]", "上一组 / 下一组"],
     ["d / u", "本列向下 / 向上半页"],
     ["g g / G", "本列顶部 / 底部"],
-    ["/", "搜索"],
     ["t", "明暗主题"],
     ["r", "刷新"],
     ["Esc", "取消选中 / 关闭"],
@@ -1026,7 +1044,7 @@ function handleVimKey(e) {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key;
 
-  // Escape is the one binding that also fires while typing in the search box.
+  // Escape blurs any focused input, closes popups, and clears selection.
   if (k === "Escape") {
     if (isTypingTarget(e.target)) e.target.blur();
     removePreview();
@@ -1045,12 +1063,8 @@ function handleVimKey(e) {
   }
 
   switch (k) {
-    case "/":
-      e.preventDefault();
-      expandSearch();
-      els.search.select();
-      break;
     case "?":
+
       e.preventDefault();
       toggleHelp();
       break;

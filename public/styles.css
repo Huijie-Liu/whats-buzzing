@@ -130,43 +130,6 @@ h1 {
   min-width: 0;
 }
 
-/* Search collapses to just the magnifier button; clicking expands the
-   input inline (width transition). It collapses again when emptied. */
-.search-box {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.search {
-  display: flex;
-  align-items: center;
-  width: 0;
-  height: 38px;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: var(--panel);
-  transition: width 0.25s ease, padding 0.25s ease, border-color 0.25s ease;
-}
-
-.search-box.expanded .search {
-  width: min(260px, 56vw);
-  padding: 0 12px;
-  border-color: var(--line);
-}
-
-.search input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ink);
-  font-size: 15px;
-}
-
 .icon-button {
   border: 1px solid var(--line);
   cursor: pointer;
@@ -501,8 +464,11 @@ body.theme-dark .story.translating:not(.read) {
   background: var(--line-strong);
 }
 
-.hn-stat {
+.meta time {
   margin-left: auto;
+}
+
+.hn-stat {
   white-space: nowrap;
 }
 
@@ -616,6 +582,121 @@ body.theme-dark .story.translating:not(.read) {
   overflow: visible;
   -webkit-line-clamp: unset;
 }
+
+/* ---- Source-specific card badges & accents ---- */
+
+/* Stats row: points + comments for HN, heat for Zhihu */
+.card-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.stat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.stat-badge.points {
+  background: var(--source-color, #f0652f);
+  color: #fff;
+  opacity: 0.92;
+}
+
+.stat-badge.comments {
+  background: transparent;
+  border: 1px solid var(--source-color, var(--line-strong));
+  color: var(--source-color, var(--ink));
+  text-decoration: none;
+  transition: background 0.18s ease;
+}
+
+.stat-badge.comments:hover {
+  background: var(--source-color, var(--ink));
+  color: #fff;
+}
+
+.stat-badge.heat {
+  background: #ff322e;
+  color: #fff;
+  font-size: 11px;
+  animation: heat-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes heat-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 50, 46, 0.35); }
+  50% { box-shadow: 0 0 8px 2px rgba(255, 50, 46, 0.18); }
+}
+
+.stat-badge.author {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* Publisher badge for Google News items */
+.publisher-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  margin-left: 6px;
+  border-radius: 3px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+/* ---- Source-variant card tuning ---- */
+
+/* HN: compact text card — no images, stats are the focus */
+.story-hn .media { display: none !important; }
+.story-hn .story-body { padding: 12px 16px; }
+.story-hn .title { font-size: 16px; }
+.story-hn .summary { display: none; }
+.story-hn .links { margin-top: 6px; }
+
+/* Zhihu: hot-list vibe — heat badge, compact */
+.story-zhihu .story-body { padding: 12px 16px; }
+.story-zhihu .title { font-size: 16px; }
+.story-zhihu time { display: none; }
+.story-zhihu .meta .dot { display: none; }
+
+/* Reuters: image-forward, larger hero image since no summary */
+.story-reuters .media img { height: 210px; }
+.story-reuters .summary { display: none; }
+.story-reuters .story-body { padding: 11px 16px 13px; }
+
+/* Google News: hide the summary (it only repeats the publisher name,
+   which is already shown as a .publisher-badge). */
+.story-google .summary,
+.story-google_zh .summary { display: none; }
+
+/* Google News / WSJ / AP: publisher shown in meta */
+.story-google .meta,
+.story-google_zh .meta,
+.story-wsj .meta,
+.story-ap .meta {
+  font-size: 11px;
+}
+
+/* RSS / Atom with images: slightly taller image */
+.story-economist .media img,
+.story-bloomberg .media img,
+.story-atlantic .media img,
+.story-newyorker .media img,
+.story-mit_tech .media img { height: 180px; }
 
 .empty {
   padding: 40px 20px;
@@ -820,12 +901,8 @@ body.theme-dark .story.translating:not(.read) {
   }
 }
 
-/* ---- Narrow: let the expanded search shrink to fit ---- */
+/* ---- Narrow: shrink category tabs ---- */
 @media (max-width: 640px) {
-  .search-box.expanded .search {
-    width: min(200px, 46vw);
-  }
-
   .category-tab {
     min-width: 0;
   }
@@ -846,7 +923,7 @@ body.theme-dark .story.translating:not(.read) {
   }
 
   .shell {
-    width: calc(100% - 24px);
+    width: 100%;
     margin-top: 10px;
   }
 
@@ -859,15 +936,21 @@ body.theme-dark .story.translating:not(.read) {
     width: 40px;
   }
 
-  /* One column fills the viewport; swipe snaps cleanly to the next ---- */
+  /* Each column is centered on screen — no adjacent columns peek in.
+     Physical padding on the feed creates room so the first and last columns
+     can snap to centre (scroll-padding alone doesn't add layout space). */
   .feed {
-    gap: 10px;
+    gap: 16px;
     scroll-snap-type: x mandatory;
+    scroll-padding: 0 20px;
+    padding-left: 20px;
+    padding-right: 20px;
   }
 
   .column {
-    flex-basis: 86vw;
-    max-width: 86vw;
+    flex: 0 0 calc(100vw - 40px);
+    max-width: calc(100vw - 40px);
+    scroll-snap-align: center;
   }
 
   .title {
