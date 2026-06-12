@@ -1334,7 +1334,13 @@ function openSelected() {
   if (!link || !link.href) return;
   const item = findItemById(vim.selectedId);
   if (item) markRead(item, node);
-  window.open(link.href, "_blank", "noopener");
+  // Use a temporary <a> click — more reliable than window.open
+  // (avoids popup-blocker interference)
+  const a = document.createElement("a");
+  a.href = link.href;
+  a.target = "_blank";
+  a.rel = "noreferrer";
+  a.click();
 }
 
 function cycleGroup(dir) {
