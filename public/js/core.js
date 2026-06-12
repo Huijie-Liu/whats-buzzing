@@ -13,8 +13,8 @@ export const SOURCE_GROUPS = [
 export const SOURCES = [
   { key: "reuters",    label: "路透社",       accent: "#ff8000", group: "news" },
   { key: "bloomberg",  label: "彭博社",       accent: "#0068ff", group: "news" },
-  { key: "wsj",        label: "华尔街日报",   accent: "#333740", group: "news" },
-  { key: "ap",         label: "美联社",       accent: "#ff322e", group: "news" },
+  { key: "guardian",   label: "卫报",         accent: "#052962", group: "news" },
+  { key: "bbc",        label: "BBC",          accent: "#b80000", group: "news" },
   { key: "zhihu",      label: "知乎热榜",     accent: "#0066ff", group: "hot" },
   { key: "hn",         label: "Hacker News",  accent: "#f0652f", group: "hot" },
   { key: "google",     label: "Google News 美国", accent: "#1a73e8", group: "hot" },
@@ -23,6 +23,7 @@ export const SOURCES = [
   { key: "atlantic",   label: "大西洋周刊",   accent: "#111111", group: "analysis" },
   { key: "newyorker",  label: "纽约客",       accent: "#e60000", group: "analysis" },
   { key: "mit_tech",   label: "MIT 科技评论", accent: "#ff5a00", group: "analysis" },
+  { key: "verge",      label: "The Verge",    accent: "#e2127a", group: "analysis" },
 ];
 
 export const MAX_ITEMS_PER_TAB     = 50;
@@ -33,8 +34,8 @@ export const MAX_READ_IDS          = 2000;
 export const MAX_TRANSLATION_CACHE = 600;
 
 export const TRANSLATABLE_SOURCES = new Set([
-  "hn", "economist", "reuters", "bloomberg", "wsj", "ap",
-  "google", "atlantic", "newyorker", "mit_tech", "washingtonpost",
+  "hn", "economist", "reuters", "bloomberg", "guardian", "bbc",
+  "google", "atlantic", "newyorker", "mit_tech", "verge",
 ]);
 
 // Sources that never carry meaningful summaries — suppress the summary line

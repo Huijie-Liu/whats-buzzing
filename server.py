@@ -108,29 +108,46 @@ SOURCES = {
             "https://feeds.bloomberg.com/pursuits/news.rss",
         ],
     },
-    "wsj": {
-        "label": "华尔街日报",
-        "short": "WSJ",
-        "kind": "google_rss",
-        "home": "https://www.wsj.com/",
-        "accent": "#333740",
+    "guardian": {
+        "label": "卫报",
+        "short": "Guardian",
+        "kind": "rss",
+        "home": "https://www.theguardian.com/",
+        "accent": "#052962",
         "story_limit": 50,
-        "show_publisher": False,
         "feeds": [
-            "https://news.google.com/rss/search?q=site:wsj.com+when:3d&hl=en-US&gl=US&ceid=US:en",
+            "https://www.theguardian.com/world/rss",
+            "https://www.theguardian.com/us-news/rss",
+            "https://www.theguardian.com/uk-news/rss",
+            "https://www.theguardian.com/business/rss",
+            "https://www.theguardian.com/technology/rss",
+            "https://www.theguardian.com/politics/rss",
         ],
     },
-    "ap": {
-        "label": "美联社",
-        "short": "AP",
-        "kind": "google_rss",
-        "home": "https://apnews.com/",
-        "accent": "#ff322e",
+    "bbc": {
+        "label": "BBC",
+        "short": "BBC",
+        "kind": "rss",
+        "home": "https://www.bbc.com/news",
+        "accent": "#b80000",
         "story_limit": 50,
-        "show_publisher": False,
         "feeds": [
-            "https://news.google.com/rss/search?q=site:apnews.com+when:3d&hl=en-US&gl=US&ceid=US:en",
+            "https://feeds.bbci.co.uk/news/world/rss.xml",
+            "https://feeds.bbci.co.uk/news/uk/rss.xml",
+            "https://feeds.bbci.co.uk/news/business/rss.xml",
+            "https://feeds.bbci.co.uk/news/technology/rss.xml",
+            "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+            "https://feeds.bbci.co.uk/news/politics/rss.xml",
         ],
+    },
+    "verge": {
+        "label": "The Verge",
+        "short": "Verge",
+        "kind": "atom",
+        "home": "https://www.theverge.com/",
+        "accent": "#e2127a",
+        "story_limit": 30,
+        "feeds": ["https://www.theverge.com/rss/index.xml"],
     },
     "google": {
         "label": "Google News 美国",
@@ -935,6 +952,14 @@ def parse_atom(source_key, meta, raw):
         if not title or not link:
             continue
         media = entry.find("media:content", NS)
+        img = media.attrib.get("url", "") if media is not None else ""
+        # Fallback: extract first <img> from content HTML (e.g. The Verge)
+        if not img:
+            content = entry.find("atom:content", NS)
+            if content is not None and content.text:
+                m = re.search(r'<img[^>]+src="([^"]+)"', content.text)
+                if m:
+                    img = m.group(1)
         items.append(
             make_item(
                 source_key,
@@ -942,7 +967,7 @@ def parse_atom(source_key, meta, raw):
                 title=title,
                 url=link,
                 summary=child_text(entry, "atom:summary", NS),
-                image=media.attrib.get("url", "") if media is not None else "",
+                image=img,
                 published_at=child_text(entry, "atom:published", NS)
                 or child_text(entry, "atom:updated", NS),
                 item_id=child_text(entry, "atom:id", NS) or link,

@@ -1157,7 +1157,13 @@ body.theme-dark .story.translating:not(.read) {
 .story-bloomberg .media img,
 .story-atlantic  .media img,
 .story-newyorker .media img,
-.story-mit_tech  .media img {
+.story-mit_tech  .media img,
+.story-verge     .media img {
+  height: 180px;
+}
+
+.story-guardian .media img,
+.story-bbc .media img {
   height: 180px;
 }
 
