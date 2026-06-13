@@ -20,10 +20,10 @@ export const SOURCES = [
   { key: "google",     label: "Google News 美国", accent: "#1a73e8", group: "hot" },
   { key: "google_zh",  label: "Google News 中国", accent: "#34a853", group: "hot" },
   { key: "economist",  label: "经济学人",     accent: "#d71920", group: "analysis" },
+  { key: "verge",      label: "The Verge",    accent: "#e2127a", group: "analysis" },
   { key: "atlantic",   label: "大西洋周刊",   accent: "#111111", group: "analysis" },
   { key: "newyorker",  label: "纽约客",       accent: "#e60000", group: "analysis" },
   { key: "mit_tech",   label: "MIT 科技评论", accent: "#ff5a00", group: "analysis" },
-  { key: "verge",      label: "The Verge",    accent: "#e2127a", group: "analysis" },
 ];
 
 export const MAX_ITEMS_PER_TAB     = 50;
