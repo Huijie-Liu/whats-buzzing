@@ -6,18 +6,11 @@ import {
   state, SOURCES, SOURCE_GROUPS,
   escapeText, formatRelativeTime, isLiveTitle, escapeHtml,
   activeGroupSources, sourceCount, setActiveGroup,
-  displayTitle, displaySummary, hasSuppressibleSummary,
-  findItemById, shouldTranslateItem, markRead,
+  findItemById, markRead,
   groupColumns, displayedItems,
 } from './core.js';
 
 import {
-  translateBatch,
-  startTranslationsForVisible,
-  isTranslationActive,
-  setTranslationHandler,
-  setVisibleIdsGetter,
-  setDisplayedItemsGetter,
   loadFeed,
   setFeedStateHandler,
   summaryState,
@@ -77,7 +70,6 @@ function renderCategoryTabs() {
       setActiveGroup(group.key);
       resetFeedScroll();
       render();
-      startTranslationsForVisible();
     });
     els.categoryTabs.append(btn);
   });
@@ -97,8 +89,6 @@ function renderArticle(item) {
   if (sourceKey) node.classList.add(`story-${sourceKey}`);
   node.classList.toggle("has-image",  hasImage);
   node.classList.toggle("read",       state.readIds.has(item.id));
-  node.classList.toggle("translating", item.translationStatus === "streaming" || item.translationStatus === "queued");
-  node.classList.toggle("translated",  item.translationStatus === "done");
   node.style.setProperty("--source-color", item.accent || "#191b1f");
 
   // --- Media (image) ---
@@ -138,8 +128,8 @@ function renderArticle(item) {
   // --- Title ---
   const title = node.querySelector(".title");
   title.href = mainUrl;
-  title.textContent = escapeText(displayTitle(item));
-  if (isLiveTitle(item.titleOriginal || item.title || "")) {
+  title.textContent = escapeText(item.title || item.summary || "Untitled");
+  if (isLiveTitle(item.title || "")) {
     const badge = document.createElement("span");
     badge.className = "live-badge";
     badge.textContent = "LIVE";
@@ -149,9 +139,9 @@ function renderArticle(item) {
 
   // --- Summary ---
   const summary = node.querySelector(".summary");
-  const summaryText = displaySummary(item);
+  const summaryText = item.summary || "";
   summary.textContent = escapeText(summaryText);
-  summary.hidden = !summaryText || hasSuppressibleSummary(item);
+  summary.hidden = !summaryText;
 
   // --- Links row ---
   const links = node.querySelector(".links");
@@ -247,7 +237,7 @@ function buildSourceFeatures(node, item, sourceKey, mainUrl, links) {
 
   // --- Google News: publisher badge ---
   if (sourceKey === "google" || sourceKey === "google_zh") {
-    const publisher = (item.summaryOriginal || "").trim();
+    const publisher = (item.summary || "").trim();
     if (publisher && publisher.length < 40) {
       const badge = document.createElement("span");
       badge.className = "publisher-badge";
@@ -346,38 +336,6 @@ function applyLazyImage(node, imageUrl) {
 
   node.classList.add("has-image");
   node.classList.add("lazy-image-loaded");
-}
-
-// =========================================================================
-// Rendering: Update existing article node (for translation)
-// =========================================================================
-
-function updateArticleNode(item, animate = false) {
-  const node = findArticleNode(item.id);
-  if (!node) return;
-
-  node.classList.toggle("translating", item.translationStatus === "streaming" || item.translationStatus === "queued");
-  node.classList.toggle("translated",  item.translationStatus === "done");
-
-  node.querySelector(".title").textContent   = escapeText(displayTitle(item));
-  const summaryEl = node.querySelector(".summary");
-  const sText = displaySummary(item);
-  summaryEl.textContent = escapeText(sText);
-  summaryEl.hidden = !sText || hasSuppressibleSummary(item);
-
-  // Re-evaluate expand button
-  node.querySelector(".expand-toggle")?.remove();
-  addExpandButtons();
-
-  if (animate) {
-    node.classList.remove("translation-swap");
-    void node.offsetWidth;
-    node.classList.add("translation-swap");
-  }
-}
-
-function findArticleNode(id) {
-  return $$(".story").find((n) => n.dataset.itemId === id) || null;
 }
 
 // =========================================================================
@@ -503,98 +461,12 @@ function initScrollTop() {
 }
 
 // =========================================================================
-// Translation scroll handler
+// Scroll helpers
 // =========================================================================
 
 function resetFeedScroll() {
   els.feed.scrollLeft = 0;
   $$(".column-list").forEach((list) => { list.scrollTop = 0; });
-}
-
-let scrollTimer = null;
-
-function onScrollTranslate() {
-  if (scrollTimer) clearTimeout(scrollTimer);
-  scrollTimer = setTimeout(() => {
-    // If a batch is already in flight, skip for now — the drain handler
-    // will pick up newly-visible items when the batch completes.
-    if (isTranslationActive()) return;
-    translateVisibleIfNeeded();
-  }, 250);
-}
-
-// Called from the drain handler when a translation batch finishes.
-// No debounce needed — the stream just ended and we want immediate catch-up.
-function scheduleTranslateVisible() {
-  if (isTranslationActive()) return;
-  translateVisibleIfNeeded();
-}
-
-function translateVisibleIfNeeded() {
-  const visibleIds = getVisibleItemIds();
-  const pending = displayedItems().filter(shouldTranslateItem);
-  const needsWork = pending.filter((item) => visibleIds.has(item.id));
-  if (needsWork.length) translateBatch(needsWork);
-}
-
-function getVisibleItemIds() {
-  const ids = new Set();
-  const vH = window.innerHeight;
-  const vW = window.innerWidth;
-  $$(".story").forEach((el) => {
-    const r = el.getBoundingClientRect();
-    if (r.bottom >= -vH * 0.4 && r.top <= vH * 1.4 && r.right >= -vW * 0.5 && r.left <= vW + vW * 0.5) {
-      ids.add(el.dataset.itemId);
-    }
-  });
-  return ids;
-}
-
-// =========================================================================
-// Preview popup (hover to show original EN text)
-// =========================================================================
-
-let previewTimer  = null;
-let previewPopup  = null;
-
-function removePreview() {
-  if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
-  if (previewPopup) { previewPopup.remove(); previewPopup = null; }
-}
-
-function showOriginal(anchor) {
-  removePreview();
-  const story = anchor.closest(".story");
-  const item  = story && findItemById(story.dataset.itemId);
-  if (!item) return;
-
-  const origTitle   = (item.titleEn || item.titleOriginal || "").trim();
-  const origSummary = (item.summaryOriginal || "").trim();
-  const hasTitle   = origTitle   && origTitle   !== displayTitle(item).trim();
-  const hasSummary = origSummary && origSummary !== displaySummary(item).trim();
-  if (!hasTitle && !hasSummary) return;
-
-  previewTimer = setTimeout(() => {
-    previewPopup = document.createElement("div");
-    previewPopup.className = "preview-popup";
-    if (hasTitle) {
-      const t = document.createElement("div");
-      t.className = "preview-title";
-      t.textContent = origTitle;
-      previewPopup.appendChild(t);
-    }
-    if (hasSummary) {
-      const s = document.createElement("div");
-      s.className = "preview-summary";
-      s.textContent = origSummary;
-      previewPopup.appendChild(s);
-    }
-    document.body.appendChild(previewPopup);
-
-    const rect = anchor.getBoundingClientRect();
-    previewPopup.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 396))}px`;
-    previewPopup.style.top  = `${Math.min(rect.bottom + 6, window.innerHeight - 40)}px`;
-  }, 350);
 }
 
 // =========================================================================
@@ -617,16 +489,16 @@ function buildSummaryBody() {
     return partial
       ? `<div class="summary-text streaming">${escapeHtml(partial).replace(/\n/g, '<br>')}<span class="summary-cursor">|</span></div>`
       : `<div class="summary-loading">
-           <span class="summary-spinner"></span>
-           <span>正在生成总结...</span>
-         </div>
-         <div class="summary-skeleton">
-           <div class="summary-sk-line"></div>
-           <div class="summary-sk-line short"></div>
-           <div class="summary-sk-line"></div>
-           <div class="summary-sk-line short"></div>
-           <div class="summary-sk-line medium"></div>
-         </div>`;
+             <span class="summary-spinner"></span>
+             <span>正在生成总结...</span>
+           </div>
+           <div class="summary-skeleton">
+             <div class="summary-sk-line"></div>
+             <div class="summary-sk-line short"></div>
+             <div class="summary-sk-line"></div>
+             <div class="summary-sk-line short"></div>
+             <div class="summary-sk-line medium"></div>
+           </div>`;
   }
   if (summaryState.text) {
     return `<div class="summary-text">${renderSummaryMarkdown(summaryState.text)}</div>`;
@@ -859,7 +731,6 @@ function switchColumn(dir) {
   const next = cols[Math.min(Math.max(idx + dir, 0), cols.length - 1)];
   next.scrollIntoView({ inline: "start", block: "nearest", behavior: "smooth" });
   selectCard(firstCardInColumn(next), { scroll: false });
-  startTranslationsForVisible();
 }
 
 function openSelected() {
@@ -884,7 +755,6 @@ function cycleGroup(dir) {
   setActiveGroup(next.key);
   resetFeedScroll();
   render();
-  startTranslationsForVisible();
 }
 
 function isTypingTarget(el) {
@@ -918,7 +788,6 @@ function handleVimKey(e) {
 
   if (k === "Escape") {
     if (isTypingTarget(e.target)) e.target.blur();
-    removePreview();
     document.querySelector(".kbd-help")?.remove();
     dismissSummaryModal();
     clearSelection();
@@ -971,9 +840,9 @@ function handleVimKey(e) {
       break;
     case "r": e.preventDefault(); loadFeed(); break;
     case "t": e.preventDefault(); setTheme(state.theme === "dark" ? "light" : "dark"); break;
-    case "1": e.preventDefault(); setActiveGroup("news"); resetFeedScroll(); render(); startTranslationsForVisible(); break;
-    case "2": e.preventDefault(); setActiveGroup("hot"); resetFeedScroll(); render(); startTranslationsForVisible(); break;
-    case "3": e.preventDefault(); setActiveGroup("analysis"); resetFeedScroll(); render(); startTranslationsForVisible(); break;
+    case "1": e.preventDefault(); setActiveGroup("news"); resetFeedScroll(); render(); break;
+    case "2": e.preventDefault(); setActiveGroup("hot"); resetFeedScroll(); render(); break;
+    case "3": e.preventDefault(); setActiveGroup("analysis"); resetFeedScroll(); render(); break;
   }
 }
 
@@ -982,31 +851,11 @@ function handleVimKey(e) {
 // =========================================================================
 
 function setupApiBridge() {
-  // Translation handler
-  setTranslationHandler((item, opts) => {
-    if (!item) {
-      if (opts?.type === "drain") {
-        // A translation batch just finished — pick up any visible items that
-        // scrolled into view while the batch was in flight.
-        scheduleTranslateVisible();
-      }
-      return;
-    }
-    if (opts.type === "done") updateArticleNode(item, true);
-    else updateArticleNode(item, false);
-  });
-
-  // Visible IDs getter
-  setVisibleIdsGetter(getVisibleItemIds);
-
-  // Displayed items getter
-  setDisplayedItemsGetter(displayedItems);
-
   // Feed state changes
   setFeedStateHandler((action, payload) => {
     switch (action) {
       case "loading": renderColumns(); break;
-      case "render":  render(); resetFeedScroll(); break;  // translation is scheduled by loadFeed
+      case "render":  render(); resetFeedScroll(); break;
       case "errors":  renderErrors(payload); break;
       case "error":   els.error.hidden = false; els.error.textContent = `无法读取 feed：${payload}`; break;
     }
@@ -1036,20 +885,6 @@ function bindEvents() {
 
   // AI Summary button
   els.summaryButton.addEventListener("click", onSummaryClick);
-
-  // Feed scroll (capture phase for inner column scrolling)
-  els.feed.addEventListener("scroll", onScrollTranslate, { capture: true, passive: true });
-
-  // Preview popup
-  els.feed.addEventListener("mouseover", (e) => {
-    const anchor = e.target.closest(".title, .summary");
-    if (!anchor) { removePreview(); return; }
-    showOriginal(anchor);
-  });
-  els.feed.addEventListener("mouseout", (e) => {
-    if (e.target.closest(".title, .summary")) removePreview();
-  });
-  els.feed.addEventListener("scroll", removePreview, { capture: true, passive: true });
 
   // Keyboard
   document.addEventListener("keydown", handleVimKey);

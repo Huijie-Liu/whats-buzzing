@@ -29,17 +29,7 @@ export const SOURCES = [
 export const MAX_ITEMS_PER_TAB     = 50;
 export const READ_STORAGE_KEY      = "readArticleIds";
 export const THEME_STORAGE_KEY     = "themeMode";
-export const TRANSLATION_CACHE_KEY = "tlV3";
 export const MAX_READ_IDS          = 2000;
-export const MAX_TRANSLATION_CACHE = 600;
-
-export const TRANSLATABLE_SOURCES = new Set([
-  "hn", "economist", "reuters", "bloomberg", "guardian", "bbc",
-  "google", "atlantic", "newyorker", "mit_tech", "verge",
-]);
-
-// Sources that never carry meaningful summaries — suppress the summary line
-const NO_SUMMARY_SOURCES = new Set(["hn", "reuters", "google", "google_zh"]);
 
 // ---- State ---------------------------------------------------------------
 
@@ -74,21 +64,6 @@ export function nextItemSeq() { return ++_itemSeq; }
 export function resetItemSeq() { _itemSeq = 0; }
 
 // ---- Storage helpers ----------------------------------------------------
-
-export function loadTranslationCache() {
-  try { return JSON.parse(localStorage.getItem(TRANSLATION_CACHE_KEY) || "{}"); }
-  catch { return {}; }
-}
-
-export function saveTranslationCache(cache) {
-  const entries = Object.entries(cache);
-  if (entries.length > MAX_TRANSLATION_CACHE) {
-    entries.sort((a, b) => (b[1].savedAt || 0) - (a[1].savedAt || 0));
-    cache = Object.fromEntries(entries.slice(0, MAX_TRANSLATION_CACHE));
-  }
-  try { localStorage.setItem(TRANSLATION_CACHE_KEY, JSON.stringify(cache)); }
-  catch { /* quota exceeded — silently drop */ }
-}
 
 export function saveReadIds() {
   const ids = Array.from(state.readIds).slice(-MAX_READ_IDS);
@@ -129,55 +104,6 @@ export function setActiveGroup(groupKey) {
   if (!SOURCE_GROUPS.some((g) => g.key === groupKey)) return;
   state.activeGroup = groupKey;
   localStorage.setItem("activeSourceGroup", groupKey);
-}
-
-// ---- Item processing -----------------------------------------------------
-
-export function prepareItem(item, translationCache = {}) {
-  const cached = translationCache[item.id];
-  if (cached?.titleZh) {
-    return {
-      ...item,
-      titleOriginal:    item.title || "",
-      summaryOriginal:  item.summary || "",
-      titleZh:          cached.titleZh,
-      summaryZh:        item.summary ? (cached.summaryZh || "") : "",
-      translationStatus: "done",
-    };
-  }
-  return {
-    ...item,
-    titleOriginal:    item.title || "",
-    summaryOriginal:  item.summary || "",
-    translationStatus: TRANSLATABLE_SOURCES.has(item.source) ? "pending" : "skipped",
-  };
-}
-
-export function displayTitle(item) {
-  return item.titleZh || item.titleOriginal || item.title || item.summary || "Untitled";
-}
-
-export function displaySummary(item) {
-  if (!(item.summaryOriginal || item.summary)) return "";
-  return item.summaryZh || item.summaryOriginal || item.summary || "";
-}
-
-export function hasSuppressibleSummary(item) {
-  return NO_SUMMARY_SOURCES.has(item.source);
-}
-
-export function shouldTranslateItem(item) {
-  return (
-    TRANSLATABLE_SOURCES.has(item.source) &&
-    item.translationStatus !== "streaming" &&
-    item.translationStatus !== "queued" &&
-    item.translationStatus !== "done" &&
-    !item.titleZh
-  );
-}
-
-export function findItemById(id) {
-  return state.items.find((item) => item.id === id);
 }
 
 // ---- Utilities -----------------------------------------------------------
@@ -240,13 +166,6 @@ export function displayedItems() {
   return groupColumns().flatMap((col) => col.items);
 }
 
-// ---- Translation state helpers -------------------------------------------
-
-export function translationPayload(item) {
-  return {
-    id: item.id,
-    source: item.source,
-    title: item.titleOriginal || item.title || "",
-    summary: item.summaryOriginal || item.summary || "",
-  };
+export function findItemById(id) {
+  return state.items.find((item) => item.id === id);
 }

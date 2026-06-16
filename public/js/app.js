@@ -2,8 +2,8 @@
 // app.js — Entry point
 // =========================================================================
 //
-// Buzzing Focus — a multi-source news aggregator with AI summaries,
-// bilingual translation, and vim-style keyboard navigation.
+// Buzzing Focus — a multi-source news aggregator with AI summaries
+// and vim-style keyboard navigation.
 //
 // Architecture
 // ┌──────────┐    ┌──────────┐    ┌──────────┐

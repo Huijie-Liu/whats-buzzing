@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import hashlib
 import html
 import json
 import mimetypes
@@ -174,7 +173,6 @@ SOURCES = {
         "home": "https://news.google.com/topstories?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
         "accent": "#34a853",
         "story_limit": 50,
-        "translate": False,
         "feeds": [
             "https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
             "https://news.google.com/rss/headlines/section/topic/WORLD?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
@@ -218,7 +216,6 @@ SOURCES = {
         "home": "https://www.zhihu.com/hot",
         "accent": "#0066ff",
         "story_limit": 30,
-        "translate": False,
     },
     "washingtonpost": {
         "label": "华盛顿邮报",
@@ -300,7 +297,7 @@ def claude_deepseek_config():
 CLAUDE_DEEPSEEK = claude_deepseek_config()
 DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1").rstrip("/")
-TRANSLATION_MODEL = (
+AI_MODEL = (
     os.environ.get("DEEPSEEK_MODEL")
     or (CLAUDE_DEEPSEEK.get("model") if not DEEPSEEK_KEY else "")
     or "deepseek-chat"
@@ -309,82 +306,13 @@ _deepseek_client = openai.OpenAI(
     api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_BASE_URL
 ) if DEEPSEEK_KEY and openai else None
 
-_translation_cache: dict[str, str] = {}
-DEFAULT_TRANSLATION_CACHE_FILE = (
-    "/tmp/news-focus-translation-cache.json"
-    if os.environ.get("VERCEL")
-    else str(ROOT / ".translation_cache.json")
-)
-TRANSLATION_CACHE_FILE = Path(
-    os.environ.get("TRANSLATION_CACHE_FILE", DEFAULT_TRANSLATION_CACHE_FILE)
-)
-MAX_CACHE_SIZE = 10000
 
-
-def _load_translation_cache():
-    global _translation_cache
-    if TRANSLATION_CACHE_FILE.exists():
-        try:
-            _translation_cache = json.loads(TRANSLATION_CACHE_FILE.read_text("utf-8"))
-        except (json.JSONDecodeError, OSError):
-            _translation_cache = {}
-
-
-def _save_translation_cache():
-    global _translation_cache
-    if len(_translation_cache) > MAX_CACHE_SIZE:
-        keys = list(_translation_cache.keys())[-MAX_CACHE_SIZE:]
-        _translation_cache = {k: _translation_cache[k] for k in keys}
-    try:
-        TRANSLATION_CACHE_FILE.write_text(
-            json.dumps(_translation_cache, ensure_ascii=False), "utf-8"
-        )
-    except OSError:
-        pass
-
-
-BATCH_SIZE = 15
-
-
-def should_translate_source(source_key):
-    return SOURCES.get(source_key, {}).get("translate", True)
-
-
-def translatable_summary(source_key, summary):
-    if source_key in {"hn", "google", "google_zh", "reuters"}:
-        return ""
-    return summary
-
-
-def translation_cache_key(title, summary):
-    raw = json.dumps([title, summary], ensure_ascii=False, sort_keys=True)
-    return "item-v2:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _build_batch_prompt(batch):
-    """Build a numbered prompt for batch translation."""
-    entries = []
-    for i, item in enumerate(batch):
-        entry = f"[{i}] 标题：{item['title']}"
-        if item.get("summary"):
-            entry += f"\n摘要：{item['summary']}"
-        entries.append(entry)
-    numbered = "\n\n".join(entries)
-    return (
-        "你是一个专业新闻翻译助手。请将以下编号的英文新闻标题和摘要翻译成简洁、地道的中文。"
-        "对每条新闻输出一行，格式必须严格为：\n"
-        '[编号] {"title":"中文标题","summary":"中文摘要"}\n'
-        "如果没有摘要，summary 输出空字符串。不要输出任何其他内容。\n\n"
-        + numbered
-    )
-
-
-def _call_translation_api_stream(prompt):
-    """Call the translation API with streaming. Yields text chunks for real-time parsing."""
+def _call_ai_api_stream(prompt):
+    """Call the AI API with streaming. Yields text chunks for real-time parsing."""
     if DEEPSEEK_KEY:
         client = openai.OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_BASE_URL)
         stream = client.chat.completions.create(
-            model=TRANSLATION_MODEL,
+            model=AI_MODEL,
             messages=[
                 {"role": "system", "content": "你是一个专业新闻翻译助手，翻译简洁准确。"},
                 {"role": "user", "content": prompt},
@@ -415,7 +343,7 @@ def _call_translation_api_stream(prompt):
             "anthropic-version": "2023-06-01",
         }
         payload = {
-            "model": TRANSLATION_MODEL,
+            "model": AI_MODEL,
             "system": "你是一个专业新闻翻译助手，翻译简洁准确。",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 4096,
@@ -458,7 +386,7 @@ def _call_translation_api_stream(prompt):
 
     if _deepseek_client:
         stream = _deepseek_client.chat.completions.create(
-            model=TRANSLATION_MODEL,
+            model=AI_MODEL,
             messages=[
                 {"role": "system", "content": "你是一个专业新闻翻译助手，翻译简洁准确。"},
                 {"role": "user", "content": prompt},
@@ -563,7 +491,7 @@ def summary_events(items):
 
     try:
         buffer = ""
-        for chunk in _call_translation_api_stream(prompt):
+        for chunk in _call_ai_api_stream(prompt):
             buffer += chunk
             yield {"type": "chunk", "text": chunk}
 
@@ -572,119 +500,6 @@ def summary_events(items):
         yield {"type": "error", "message": str(exc)}
 
     yield {"type": "complete"}
-
-
-def translation_events(items):
-    candidates = []
-    for item in items[:50]:
-        item_id = text(item.get("id"))
-        source_key = text(item.get("source"))
-        title = text(item.get("title"))
-        if not item_id or not title or not should_translate_source(source_key):
-            continue
-        summary = text(translatable_summary(source_key, item.get("summary", "")))
-        candidates.append({
-            "id": item_id,
-            "source": source_key,
-            "title": title,
-            "summary": summary,
-        })
-
-    if not candidates:
-        yield {"type": "complete"}
-        return
-
-    # Serve from cache first
-    uncached = []
-    for c in candidates:
-        cache_key = translation_cache_key(c["title"], c["summary"])
-        cached = _translation_cache.get(cache_key)
-        if cached:
-            try:
-                yield {"type": "done", "id": c["id"], **json.loads(cached)}
-            except (TypeError, json.JSONDecodeError):
-                uncached.append(c)
-        else:
-            uncached.append(c)
-
-    if not uncached:
-        yield {"type": "complete"}
-        return
-
-    # Batch uncached items, stream the response, emit each result as it arrives
-    batches = [uncached[i:i + BATCH_SIZE] for i in range(0, len(uncached), BATCH_SIZE)]
-
-    for batch in batches:
-        for item in batch:
-            yield {"type": "start", "id": item["id"]}
-
-        try:
-            prompt = _build_batch_prompt(batch)
-            buffer = ""
-            done_indices = set()
-
-            for chunk in _call_translation_api_stream(prompt):
-                buffer += chunk
-                # Parse complete lines from the stream
-                *complete_lines, buffer = buffer.split("\n")
-                for line in complete_lines:
-                    m = re.match(r"\[(\d+)\]\s*(\{.*\})", line.strip())
-                    if not m:
-                        continue
-                    idx = int(m.group(1))
-                    if idx in done_indices or idx >= len(batch):
-                        continue
-                    try:
-                        obj = json.loads(m.group(2))
-                        translated = {
-                            "title": text(obj.get("title", "")),
-                            "summary": text(obj.get("summary", "")),
-                        }
-                    except json.JSONDecodeError:
-                        continue
-                    item = batch[idx]
-                    cache_key = translation_cache_key(item["title"], item["summary"])
-                    _translation_cache[cache_key] = json.dumps(translated, ensure_ascii=False)
-                    yield {"type": "done", "id": item["id"], **translated}
-                    done_indices.add(idx)
-
-            # Handle any remaining buffer content
-            if buffer.strip():
-                m = re.match(r"\[(\d+)\]\s*(\{.*\})", buffer.strip())
-                if m:
-                    idx = int(m.group(1))
-                    if idx not in done_indices and idx < len(batch):
-                        try:
-                            obj = json.loads(m.group(2))
-                            translated = {
-                                "title": text(obj.get("title", "")),
-                                "summary": text(obj.get("summary", "")),
-                            }
-                            item = batch[idx]
-                            cache_key = translation_cache_key(item["title"], item["summary"])
-                            _translation_cache[cache_key] = json.dumps(translated, ensure_ascii=False)
-                            yield {"type": "done", "id": item["id"], **translated}
-                            done_indices.add(idx)
-                        except json.JSONDecodeError:
-                            pass
-
-            # Items the model missed — report as error so the client retries.
-            # We must NOT yield "done" with the original text, because the
-            # client would mark them as translated and never retry.
-            for i, item in enumerate(batch):
-                if i not in done_indices:
-                    yield {"type": "error", "id": item["id"],
-                           "message": "模型未返回此条翻译，将重试"}
-
-            _save_translation_cache()
-        except Exception as exc:
-            for item in batch:
-                yield {"type": "error", "id": item["id"], "message": str(exc)}
-
-    yield {"type": "complete"}
-
-
-_load_translation_cache()
 
 
 def iso_now():
@@ -1347,7 +1162,7 @@ def create_flask_app():
             "has_claude_token": bool(CLAUDE_DEEPSEEK.get("token")),
             "claude_base_url": CLAUDE_DEEPSEEK.get("base_url", ""),
             "deepseek_base_url": DEEPSEEK_BASE_URL,
-            "model": TRANSLATION_MODEL,
+            "model": AI_MODEL,
             "has_openai": openai is not None,
             "_deepseek_client": bool(_deepseek_client),
         })
@@ -1403,27 +1218,6 @@ def create_flask_app():
 
         IMAGE_CACHE[url] = (now, image)
         return json_response({"image": image})
-
-    @flask_app.post("/api/translate")
-    def flask_translate():
-        if (request.content_length or 0) > 1_000_000:
-            return json_response({"error": "request too large"}, status=413)
-
-        payload = request.get_json(silent=True) or {}
-        items = payload.get("items", [])
-        if not isinstance(items, list):
-            return json_response({"error": "Invalid items"}, status=400)
-
-        def generate():
-            clean_items = [item for item in items if isinstance(item, dict)]
-            for event in translation_events(clean_items):
-                yield json.dumps(event, ensure_ascii=False) + "\n"
-
-        return Response(
-            stream_with_context(generate()),
-            content_type="application/x-ndjson; charset=utf-8",
-            headers=api_headers(stream=True),
-        )
 
     @flask_app.post("/api/summary")
     def flask_summary():
@@ -1504,9 +1298,6 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/api/translate":
-            self.handle_translate()
-            return
         if parsed.path == "/api/summary":
             self.handle_summary()
             return
@@ -1574,39 +1365,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-
-    def handle_translate(self):
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            length = 0
-        if length > 1_000_000:
-            self.send_error(413)
-            return
-
-        try:
-            raw = self.rfile.read(length) if length else b"{}"
-            payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            self.send_error(400, "Invalid JSON")
-            return
-
-        items = payload.get("items", [])
-        if not isinstance(items, list):
-            self.send_error(400, "Invalid items")
-            return
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache, no-transform")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
-
-        for event in translation_events([item for item in items if isinstance(item, dict)]):
-            line = json.dumps(event, ensure_ascii=False).encode("utf-8") + b"\n"
-            self.wfile.write(line)
-            self.wfile.flush()
 
     def handle_summary(self):
         try:

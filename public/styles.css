@@ -42,8 +42,6 @@
   --read-border:   #e3e7ea;
   --read-title:    #7b838c;
   --read-muted:    #8b929a;
-  --translating-border: #9fc4ff;
-  --translating-bg:     #fbfdff;
   --overlay-bg:    rgba(15, 17, 21, 0.42);
 }
 
@@ -72,8 +70,6 @@ body.theme-dark {
   --read-border:   #242b33;
   --read-title:    #7f8994;
   --read-muted:    #707984;
-  --translating-border: #386aa9;
-  --translating-bg:     #151b24;
   --overlay-bg:    rgba(15, 17, 21, 0.42);
 }
 
@@ -395,11 +391,6 @@ h1 {
     }
   }
 
-  &.translating:not(.read) {
-    border-color: var(--translating-border);
-    animation: translate-breathe 2s ease-in-out infinite;
-  }
-
   &.expanded .summary {
     display: block;
     overflow: visible;
@@ -418,20 +409,6 @@ h1 {
     pointer-events: none;
   }
 
-  /* ---- Translating dot on title ---- */
-
-  &.translating .title::after {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    margin-left: 8px;
-    border-radius: 50%;
-    background: var(--source-color, var(--ink));
-    vertical-align: middle;
-    opacity: 0.48;
-    animation: pulse 1.8s ease-in-out infinite;
-    content: "";
-  }
 }
 
 /* Hover (non-touch devices) */
@@ -547,15 +524,6 @@ h1 {
   font-size: 11px;
   font-weight: 600;
   vertical-align: middle;
-}
-
-/* ---- Translation swap animation ---- */
-
-.translation-swap {
-  .title,
-  .summary {
-    animation: translate-in 0.32s ease both;
-  }
 }
 
 /* =========================================================================
@@ -892,6 +860,7 @@ h1 {
 
 .cite-cluster {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 3px;
   margin-left: 2px;
   vertical-align: middle;
@@ -910,6 +879,7 @@ h1 {
   text-decoration: none;
   transition: background 0.15s ease, transform 0.15s ease;
   white-space: nowrap;
+  flex-shrink: 0;
 
   &:hover {
     background: var(--cite-color, #888);
@@ -931,37 +901,6 @@ h1 {
   background: var(--notice-bg);
   color: var(--notice-ink);
   font-size: 14px;
-}
-
-/* ---- Preview popup (hover to show original EN) ---- */
-
-.preview-popup {
-  position: fixed;
-  z-index: 30;
-  max-width: 380px;
-  padding: 12px 14px;
-  border: 1px solid var(--line-strong);
-  border-radius: 7px;
-  background: var(--panel);
-  color: var(--summary-ink);
-  font-size: 13px;
-  line-height: 1.5;
-  box-shadow: 0 12px 32px rgba(25, 27, 31, 0.16);
-  pointer-events: none;
-  animation: fade-up 0.18s ease both;
-}
-
-.preview-title {
-  color: var(--ink);
-  font-weight: 700;
-  font-size: 14px;
-  line-height: 1.4;
-
-  & + .preview-summary {
-    padding-top: 6px;
-    border-top: 1px solid var(--line);
-    margin-top: 6px;
-  }
 }
 
 /* ---- Keyboard help modal ---- */
@@ -1033,16 +972,6 @@ h1 {
    13. ANIMATIONS
    ========================================================================= */
 
-@keyframes pulse {
-  0%, 100% { transform: scale(0.75); opacity: 0.28; }
-  50%      { transform: scale(1);    opacity: 0.68; }
-}
-
-@keyframes translate-in {
-  from { opacity: 0.38; transform: translateY(2px); }
-  to   { opacity: 1;    transform: translateY(0); }
-}
-
 @keyframes skeleton-pulse {
   0%, 100% { opacity: 0.35; }
   50%      { opacity: 0.65; }
@@ -1078,24 +1007,6 @@ h1 {
 @keyframes live-pulse {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.65; }
-}
-
-@keyframes translate-breathe {
-  0%, 100% { background-color: var(--panel); }
-  20%      { background-color: #e8f0fd; }
-  50%      { background-color: #e8f0fd; }
-  70%      { background-color: var(--panel); }
-}
-
-body.theme-dark .story.translating:not(.read) {
-  animation: translate-breathe-dark 2s ease-in-out infinite;
-}
-
-@keyframes translate-breathe-dark {
-  0%, 100% { background-color: var(--panel); }
-  20%      { background-color: #1a2540; }
-  50%      { background-color: #1a2540; }
-  70%      { background-color: var(--panel); }
 }
 
 /* =========================================================================
@@ -1263,5 +1174,51 @@ body.theme-dark .story.translating:not(.read) {
   .scroll-top {
     right: 16px;
     bottom: max(16px, env(safe-area-inset-bottom));
+  }
+
+  /* ---- AI Summary modal: mobile fullscreen ---- */
+
+  .summary-overlay {
+    padding: 0;
+    align-items: stretch;
+    background: var(--panel);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .summary-card {
+    width: 100%;
+    max-height: none;
+    height: 100%;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+  }
+
+  .summary-card-header {
+    padding: 14px 16px;
+    font-size: 15px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .summary-card-body {
+    padding: 16px;
+  }
+
+  .summary-text {
+    font-size: 14px;
+    line-height: 1.7;
+  }
+
+  .summary-section {
+    margin-bottom: 18px;
+
+    strong { font-size: 15px; }
+
+    li {
+      font-size: 13px;
+      line-height: 1.6;
+      margin-bottom: 4px;
+    }
   }
 }

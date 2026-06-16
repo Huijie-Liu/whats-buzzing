@@ -1,6 +1,6 @@
-# News Focus
+# Buzzing Focus
 
-一个聚合新闻源并按需翻译标题/摘要的网页应用。
+一个聚合多源新闻的网页应用。
 
 ## 本地运行
 
@@ -31,4 +31,3 @@ DEEPSEEK_MODEL=deepseek-chat
 
 - `GET /api/feed`
 - `GET /api/preview`
-- `POST /api/translate`
