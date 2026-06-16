@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import html
 import json
 import mimetypes
@@ -350,13 +351,14 @@ def should_translate_source(source_key):
 
 
 def translatable_summary(source_key, summary):
-    if source_key in {"hn", "google", "google_zh"}:
+    if source_key in {"hn", "google", "google_zh", "reuters"}:
         return ""
     return summary
 
 
 def translation_cache_key(title, summary):
-    return "item-v1:" + title + "\n\n" + summary
+    raw = json.dumps([title, summary], ensure_ascii=False, sort_keys=True)
+    return "item-v2:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _build_batch_prompt(batch):
@@ -578,9 +580,9 @@ def translation_events(items):
         item_id = text(item.get("id"))
         source_key = text(item.get("source"))
         title = text(item.get("title"))
-        summary = text(translatable_summary(source_key, item.get("summary", "")))
         if not item_id or not title or not should_translate_source(source_key):
             continue
+        summary = text(translatable_summary(source_key, item.get("summary", "")))
         candidates.append({
             "id": item_id,
             "source": source_key,
@@ -666,12 +668,11 @@ def translation_events(items):
                         except json.JSONDecodeError:
                             pass
 
-            # Fallback for any items the model missed
+            # Fallback: yield original text for items the model missed,
+            # but do NOT cache — they will be retried on the next request.
             for i, item in enumerate(batch):
                 if i not in done_indices:
                     translated = {"title": item["title"], "summary": item["summary"]}
-                    cache_key = translation_cache_key(item["title"], item["summary"])
-                    _translation_cache[cache_key] = json.dumps(translated, ensure_ascii=False)
                     yield {"type": "done", "id": item["id"], **translated}
 
             _save_translation_cache()

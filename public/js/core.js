@@ -233,14 +233,6 @@ export function displayedItems() {
 
 // ---- Translation state helpers -------------------------------------------
 
-export function resetActiveTranslations() {
-  state.items.forEach((item) => {
-    if (item.translationStatus === "streaming" || item.translationStatus === "queued") {
-      item.translationStatus = item.titleZh ? "done" : "pending";
-    }
-  });
-}
-
 export function translationPayload(item) {
   return {
     id: item.id,

@@ -423,7 +423,7 @@ function getVisibleItemIds() {
   const vW = window.innerWidth;
   $$(".story").forEach((el) => {
     const r = el.getBoundingClientRect();
-    if (r.bottom >= -vH && r.top <= vH + vH && r.right >= -vW * 0.5 && r.left <= vW + vW * 0.5) {
+    if (r.bottom >= -vH * 0.4 && r.top <= vH * 1.4 && r.right >= -vW * 0.5 && r.left <= vW + vW * 0.5) {
       ids.add(el.dataset.itemId);
     }
   });
@@ -941,6 +941,40 @@ function bindEvents() {
 }
 
 // =========================================================================
+// Topbar auto-hide on scroll (mobile)
+// =========================================================================
+
+function initScrollHideTopbar() {
+  const topbar = document.getElementById("topbar");
+  if (!topbar) return;
+
+  const SCROLL_HIDE_THRESHOLD = 20;  // px of scroll before toggling
+  const SCROLL_HIDE_MIN      = 60;   // must scroll past this to hide
+
+  const columnTops = new Map();  // per-column last scrollTop
+
+  function onFeedScroll(e) {
+    const list = e.target;
+    if (!list.classList.contains("column-list")) return;
+
+    const prev    = columnTops.get(list) || 0;
+    const current = list.scrollTop;
+    const delta   = current - prev;
+    columnTops.set(list, current);
+
+    if (Math.abs(delta) < SCROLL_HIDE_THRESHOLD) return;
+
+    if (delta > 0 && current > SCROLL_HIDE_MIN) {
+      topbar.classList.add("topbar-collapsed");
+    } else if (delta < 0) {
+      topbar.classList.remove("topbar-collapsed");
+    }
+  }
+
+  els.feed.addEventListener("scroll", onFeedScroll, { capture: true, passive: true });
+}
+
+// =========================================================================
 // Initialization
 // =========================================================================
 
@@ -949,6 +983,7 @@ export function init() {
   setupApiBridge();
   bindEvents();
   initScrollTop();
+  initScrollHideTopbar();
   setTheme(state.theme);
   loadFeed();
 }

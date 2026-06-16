@@ -154,15 +154,32 @@ h1 {
 .topbar {
   flex: 0 0 auto;
   z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px clamp(14px, 3vw, 40px);
   border-bottom: 1px solid var(--topbar-line);
   background: var(--topbar-bg);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+  transition: padding 0.35s ease;
+  padding: 0;
+
+  /* Inner wrapper — takes over flex layout so we can collapse it */
+  .topbar-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px clamp(14px, 3vw, 40px);
+    overflow: hidden;
+    max-height: 200px;
+    opacity: 1;
+    transition: max-height 0.35s ease, opacity 0.28s ease, padding 0.35s ease;
+  }
+
+  &.topbar-collapsed .topbar-body {
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
 }
 
 .brand {
@@ -187,6 +204,16 @@ h1 {
   flex: 1 1 0;
   gap: 10px;
   min-width: 0;
+}
+
+/* On wider screens, always show the topbar (ignore collapsed state from mobile scroll) */
+@media (min-width: 821px) {
+  .topbar.topbar-collapsed .topbar-body {
+    max-height: 200px;
+    opacity: 1;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
 }
 
 /* =========================================================================
@@ -371,7 +398,6 @@ h1 {
   &.translating:not(.read) {
     border-color: var(--translating-border);
     animation: translate-breathe 2s ease-in-out infinite;
-    will-change: background-color;
   }
 
   &.expanded .summary {
@@ -1142,7 +1168,7 @@ body.theme-dark .story.translating:not(.read) {
 
 /* ---- Tablet / large phone ---- */
 @media (max-width: 820px) {
-  .topbar {
+  .topbar-body {
     flex-wrap: wrap;
     gap: 10px 12px;
     padding: 10px 16px;
@@ -1180,7 +1206,7 @@ body.theme-dark .story.translating:not(.read) {
 
 /* ---- Phone: full-width columns, larger tap targets ---- */
 @media (max-width: 540px) {
-  .topbar {
+  .topbar-body {
     padding: 9px 12px;
   }
 

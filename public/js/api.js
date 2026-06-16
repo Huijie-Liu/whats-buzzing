@@ -134,10 +134,28 @@ export function setVisibleIdsGetter(fn) { getVisibleIds = fn; }
 
 export function translateBatch(batch) {
   if (!batch.length) return;
+
+  // Cancel any in-flight translation — its items will be reset below
+  if (translationController) {
+    translationController.abort();
+    translationController = null;
+  }
+  translationRunId += 1;
+
+  // Reset all streaming/queued items (from the aborted batch) back to pending
+  state.items.forEach((item) => {
+    if (item.translationStatus === "streaming" || item.translationStatus === "queued") {
+      item.translationStatus = item.titleZh ? "done" : "pending";
+      onTranslationEvent?.(item, { type: "update" });
+    }
+  });
+
+  // Mark new batch items as queued
   batch.forEach((item) => {
     item.translationStatus = "queued";
     onTranslationEvent?.(item, { type: "update" });
   });
+
   translationController = new AbortController();
   const runId = ++translationRunId;
   streamTranslations(batch, runId, translationController.signal);
