@@ -17,6 +17,10 @@ export { TRANSLATABLE_SOURCES };
 let translationController = null;
 let translationRunId = 0;
 
+export function isTranslationActive() {
+  return !!translationController;
+}
+
 export function cancelTranslations() {
   translationRunId += 1;
   if (translationController) {
@@ -162,17 +166,24 @@ export function translateBatch(batch) {
 }
 
 export function startTranslationsForVisible() {
-  resetAndCancelTranslations();
+  // Cancel in-flight translation (item reset & runId are handled by translateBatch)
+  if (translationController) {
+    translationController.abort();
+    translationController = null;
+    translationRunId += 1;
+  }
+
   const visibleIds = getVisibleIds?.() || new Set();
 
   // Get displayed items via the callback (avoids circular import with ui.js)
-  let getDisplayed = null;
-  // Set by app.js after both modules are loaded
   startTranslationsForVisible._getDisplayed = startTranslationsForVisible._getDisplayed || (() => []);
 
-  const pending = startTranslationsForVisible._getDisplayed().filter(shouldTranslateItem);
-  if (!pending.length) return;
-  translateBatch(pending.filter((item) => visibleIds.has(item.id)));
+  const allDisplayed = startTranslationsForVisible._getDisplayed();
+  const pending = allDisplayed.filter(shouldTranslateItem);
+  const toTranslate = pending.filter((item) => visibleIds.has(item.id));
+  console.log(`[翻译] 显示${allDisplayed.length}条 | 待译${pending.length}条 | 可见${toTranslate.length}条 | 可见ID:${visibleIds.size}`, toTranslate.slice(0,5).map(i => i.id));
+  if (!toTranslate.length) return;
+  translateBatch(toTranslate);
 }
 
 export function drainPendingQueue() {
@@ -191,6 +202,8 @@ export async function loadFeed() {
 
   // Notify UI to show skeletons
   if (loadFeed._onStateChange) loadFeed._onStateChange("loading");
+
+  let firstSource = true;
 
   try {
     const response = await fetch("/api/feed?source=all", { cache: "no-store" });
@@ -222,7 +235,13 @@ export async function loadFeed() {
             state.sourceCounts.set(event.key, event.count);
             state.loading = false;
             loadFeed._onStateChange?.("render");
-            startTranslationsForVisible();
+            // Start translating after the first source arrives so the user
+            // sees results quickly.  Subsequent sources will be picked up
+            // after the stream finishes (in the finally block).
+            if (firstSource) {
+              firstSource = false;
+              startTranslationsForVisible();
+            }
           } else if (event.type === "done") {
             loadFeed._onStateChange?.("errors", event.errors || []);
           }
@@ -236,7 +255,12 @@ export async function loadFeed() {
   } finally {
     state.loading = false;
     loadFeed._onStateChange?.("render");
-    startTranslationsForVisible();
+    // Catch-up: translate anything visible that wasn't in the first batch.
+    // If a translation from the first-source trigger is still in flight,
+    // let it finish — the drain handler will pick up newly-visible items.
+    if (!isTranslationActive()) {
+      startTranslationsForVisible();
+    }
   }
 }
 

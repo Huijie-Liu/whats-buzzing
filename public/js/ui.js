@@ -14,6 +14,7 @@ import {
 import {
   translateBatch,
   startTranslationsForVisible,
+  isTranslationActive,
   setTranslationHandler,
   setVisibleIdsGetter,
   setDisplayedItemsGetter,
@@ -74,6 +75,7 @@ function renderCategoryTabs() {
     btn.innerHTML = `<span>${group.label}</span>`;
     btn.addEventListener("click", () => {
       setActiveGroup(group.key);
+      resetFeedScroll();
       render();
       startTranslationsForVisible();
     });
@@ -115,6 +117,11 @@ function renderArticle(item) {
     };
   } else {
     media.remove();
+    // Lazy-load og:image for items without a feed image but with a real article URL.
+    // Skip Google News: its pages are JS SPAs with a shared generic og:image.
+    if (item.url && item.url.startsWith("http") && !item.url.includes("news.google.com")) {
+      scheduleLazyImage(node, item.url);
+    }
   }
 
   // --- Source label ---
@@ -217,6 +224,9 @@ function buildSourceFeatures(node, item, sourceKey, mainUrl, links) {
 
     if (badgeGroup.children.length) {
       statsEl.appendChild(badgeGroup);
+    }
+
+    if (statsEl.children.length) {
       links.insertAdjacentElement("beforebegin", statsEl);
     }
   }
@@ -245,6 +255,97 @@ function buildSourceFeatures(node, item, sourceKey, mainUrl, links) {
       links.appendChild(badge);
     }
   }
+}
+
+// =========================================================================
+// Lazy preview images (og:image)
+// =========================================================================
+
+// Cache — avoid re-fetching the same article URL
+const lazyImageCache = new Map();
+
+// IntersectionObserver: loads og:image when a card nears the viewport
+let lazyImageObserver = null;
+
+function ensureLazyImageObserver() {
+  if (lazyImageObserver) return;
+  lazyImageObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      const node = entry.target;
+      lazyImageObserver.unobserve(node);
+      const url = node.dataset.lazyImageUrl;
+      if (!url) return;
+      loadLazyImage(node, url);
+    });
+  }, { rootMargin: "400px" });
+}
+
+function scheduleLazyImage(node, articleUrl) {
+  if (!articleUrl || lazyImageCache.has(articleUrl)) {
+    if (lazyImageCache.has(articleUrl)) {
+      const cached = lazyImageCache.get(articleUrl);
+      if (cached) applyLazyImage(node, cached);
+    }
+    return;
+  }
+  ensureLazyImageObserver();
+  node.dataset.lazyImageUrl = articleUrl;
+  lazyImageObserver.observe(node);
+}
+
+async function loadLazyImage(node, articleUrl) {
+  if (lazyImageCache.has(articleUrl)) {
+    const cached = lazyImageCache.get(articleUrl);
+    if (cached) applyLazyImage(node, cached);
+    return;
+  }
+  try {
+    const resp = await fetch(`/api/preview-image?url=${encodeURIComponent(articleUrl)}`);
+    if (!resp.ok) { lazyImageCache.set(articleUrl, null); return; }
+    const data = await resp.json();
+    const img = data.image || "";
+    lazyImageCache.set(articleUrl, img || null);
+    if (img) applyLazyImage(node, img);
+  } catch {
+    lazyImageCache.set(articleUrl, null);
+  }
+}
+
+function applyLazyImage(node, imageUrl) {
+  let media = node.querySelector(".media");
+  if (!media) {
+    media = document.createElement("a");
+    media.className = "media";
+    media.target = "_blank";
+    media.rel = "noreferrer";
+    const titleLink = node.querySelector(".title[href]");
+    media.href = titleLink?.href || "#";
+    media.addEventListener("click", () => {
+      const item = findItemById(node.dataset.itemId);
+      if (item) tryMarkRead(item, node);
+    });
+    node.insertBefore(media, node.firstChild);
+  }
+
+  let img = media.querySelector("img");
+  if (!img) {
+    img = document.createElement("img");
+    img.alt = "";
+    img.loading = "lazy";
+    media.appendChild(img);
+  }
+  img.src = imageUrl;
+  img.onerror = () => {
+    img.remove();
+    const err = document.createElement("div");
+    err.className = "media-error";
+    err.textContent = "无图";
+    media.appendChild(err);
+  };
+
+  node.classList.add("has-image");
+  node.classList.add("lazy-image-loaded");
 }
 
 // =========================================================================
@@ -405,16 +506,35 @@ function initScrollTop() {
 // Translation scroll handler
 // =========================================================================
 
+function resetFeedScroll() {
+  els.feed.scrollLeft = 0;
+  $$(".column-list").forEach((list) => { list.scrollTop = 0; });
+}
+
 let scrollTimer = null;
 
 function onScrollTranslate() {
   if (scrollTimer) clearTimeout(scrollTimer);
   scrollTimer = setTimeout(() => {
-    const visibleIds = getVisibleItemIds();
-    const pending = displayedItems().filter(shouldTranslateItem);
-    const needsWork = pending.filter((item) => visibleIds.has(item.id));
-    if (needsWork.length) translateBatch(needsWork);
+    // If a batch is already in flight, skip for now — the drain handler
+    // will pick up newly-visible items when the batch completes.
+    if (isTranslationActive()) return;
+    translateVisibleIfNeeded();
   }, 250);
+}
+
+// Called from the drain handler when a translation batch finishes.
+// No debounce needed — the stream just ended and we want immediate catch-up.
+function scheduleTranslateVisible() {
+  if (isTranslationActive()) return;
+  translateVisibleIfNeeded();
+}
+
+function translateVisibleIfNeeded() {
+  const visibleIds = getVisibleItemIds();
+  const pending = displayedItems().filter(shouldTranslateItem);
+  const needsWork = pending.filter((item) => visibleIds.has(item.id));
+  if (needsWork.length) translateBatch(needsWork);
 }
 
 function getVisibleItemIds() {
@@ -762,6 +882,7 @@ function cycleGroup(dir) {
   const idx = SOURCE_GROUPS.findIndex((g) => g.key === state.activeGroup);
   const next = SOURCE_GROUPS[(idx + dir + SOURCE_GROUPS.length) % SOURCE_GROUPS.length];
   setActiveGroup(next.key);
+  resetFeedScroll();
   render();
   startTranslationsForVisible();
 }
@@ -850,9 +971,9 @@ function handleVimKey(e) {
       break;
     case "r": e.preventDefault(); loadFeed(); break;
     case "t": e.preventDefault(); setTheme(state.theme === "dark" ? "light" : "dark"); break;
-    case "1": e.preventDefault(); setActiveGroup("news"); render(); startTranslationsForVisible(); break;
-    case "2": e.preventDefault(); setActiveGroup("hot"); render(); startTranslationsForVisible(); break;
-    case "3": e.preventDefault(); setActiveGroup("analysis"); render(); startTranslationsForVisible(); break;
+    case "1": e.preventDefault(); setActiveGroup("news"); resetFeedScroll(); render(); startTranslationsForVisible(); break;
+    case "2": e.preventDefault(); setActiveGroup("hot"); resetFeedScroll(); render(); startTranslationsForVisible(); break;
+    case "3": e.preventDefault(); setActiveGroup("analysis"); resetFeedScroll(); render(); startTranslationsForVisible(); break;
   }
 }
 
@@ -865,8 +986,9 @@ function setupApiBridge() {
   setTranslationHandler((item, opts) => {
     if (!item) {
       if (opts?.type === "drain") {
-        // Drain pending queue
-        // (pending queue logic handled in translation scroll handler)
+        // A translation batch just finished — pick up any visible items that
+        // scrolled into view while the batch was in flight.
+        scheduleTranslateVisible();
       }
       return;
     }
@@ -884,7 +1006,7 @@ function setupApiBridge() {
   setFeedStateHandler((action, payload) => {
     switch (action) {
       case "loading": renderColumns(); break;
-      case "render":  render(); startTranslationsForVisible(); break;
+      case "render":  render(); resetFeedScroll(); break;  // translation is scheduled by loadFeed
       case "errors":  renderErrors(payload); break;
       case "error":   els.error.hidden = false; els.error.textContent = `无法读取 feed：${payload}`; break;
     }

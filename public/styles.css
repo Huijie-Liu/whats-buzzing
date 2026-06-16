@@ -1102,9 +1102,8 @@ body.theme-dark .story.translating:not(.read) {
    14. SOURCE-SPECIFIC CARD VARIANTS
    ========================================================================= */
 
-/* HN: compact text cards, no images, stats badges */
+/* HN: compact text cards by default; images shown when lazy-loaded */
 .story-hn {
-  .media       { display: none !important; }
   .story-body  { padding: 12px 16px; }
   .links       { margin-top: 6px; }
   .summary     { display: none; }
@@ -1112,6 +1111,16 @@ body.theme-dark .story.translating:not(.read) {
   .card-stats {
     justify-content: space-between;
   }
+}
+
+/* Cards that gain an image via lazy og:image loading */
+.story.lazy-image-loaded {
+  .media {
+    display: block;
+
+    img { height: 150px; }
+  }
+  .story-body { padding-top: 10px; }
 }
 
 /* Zhihu: hot-list vibe, heat badge, compact */

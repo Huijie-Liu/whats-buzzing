@@ -668,12 +668,13 @@ def translation_events(items):
                         except json.JSONDecodeError:
                             pass
 
-            # Fallback: yield original text for items the model missed,
-            # but do NOT cache — they will be retried on the next request.
+            # Items the model missed — report as error so the client retries.
+            # We must NOT yield "done" with the original text, because the
+            # client would mark them as translated and never retry.
             for i, item in enumerate(batch):
                 if i not in done_indices:
-                    translated = {"title": item["title"], "summary": item["summary"]}
-                    yield {"type": "done", "id": item["id"], **translated}
+                    yield {"type": "error", "id": item["id"],
+                           "message": "模型未返回此条翻译，将重试"}
 
             _save_translation_cache()
         except Exception as exc:
@@ -705,11 +706,18 @@ META_DESC_RE = re.compile(
     r'|<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:name|property)=["\'](?:description|og:description)["\']',
     re.IGNORECASE,
 )
+OG_IMAGE_RE = re.compile(
+    r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']'
+    r'|<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+    re.IGNORECASE,
+)
 P_TAG_RE = re.compile(r"<p[^>]*>(.+?)</p>", re.DOTALL | re.IGNORECASE)
 TITLE_RE = re.compile(r"<title[^>]*>(.+?)</title>", re.DOTALL | re.IGNORECASE)
 BODY_TEXT_RE = re.compile(r"<body[^>]*>(.*?)</body>", re.DOTALL | re.IGNORECASE)
 PREVIEW_CACHE: dict[str, tuple[float, str]] = {}
 PREVIEW_CACHE_TTL = 600
+IMAGE_CACHE: dict[str, tuple[float, str]] = {}
+IMAGE_CACHE_TTL = 3600
 
 
 def extract_snippet(html_text):
@@ -735,6 +743,17 @@ def extract_snippet(html_text):
         if len(title) > 10:
             return title[:500]
 
+    return ""
+
+
+def extract_og_image(html_text):
+    m = OG_IMAGE_RE.search(html_text)
+    if m:
+        url = m.group(1) or m.group(2)
+        if url:
+            url = html.unescape(url).strip()
+            if url.startswith("http"):
+                return url
     return ""
 
 
@@ -795,6 +814,43 @@ def fetch_preview_url(url):
         return raw.decode(charset, errors="replace")
 
 
+def fetch_preview_image(url):
+    """Fetch og:image from the given URL.  Returns "" on failure.  Cached."""
+    parsed = urllib.parse.urlparse(url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
+        "Referer": origin + "/",
+        "DNT": "1",
+    }
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=10) as response:
+        raw = response.read()
+        content_type = response.headers.get("Content-Type", "")
+        charset = "utf-8"
+        if "charset=" in content_type:
+            charset = content_type.split("charset=")[-1].split(";")[0].strip()
+        image = extract_og_image(raw.decode(charset, errors="replace"))
+        return upscale_image_url(image)
+
+
+def upscale_image_url(url):
+    """Rewrite known low-res image URLs to request larger / higher-quality versions."""
+    # Guardian: already handled — rss_image() picks the largest width variant
+    # BBC: ichef.bbci.co.uk — replace {N} width in path with 976
+    if "ichef.bbci.co.uk" in url or "ichef.bbc.co.uk" in url:
+        url = re.sub(r"/news/\d+/", "/news/976/", url)
+        url = re.sub(r"/standard/\d+/", "/standard/976/", url)
+        return url
+    # Google CDN cached images (e.g. from Google News) — bump width param
+    if "googleusercontent.com" in url:
+        url = re.sub(r"w\d+", "w800", url)
+        return url
+    return url
+
+
 def make_item(
     source_key,
     meta,
@@ -808,6 +864,7 @@ def make_item(
     score=None,
     comments=None,
     discussion_url="",
+    rank=None,
 ):
     stable_id = item_id or url or title
     return {
@@ -820,10 +877,11 @@ def make_item(
         "summary": clean_html(summary),
         "url": text(url),
         "discussionUrl": text(discussion_url),
-        "image": text(image),
+        "image": text(upscale_image_url(image)),
         "publishedAt": normalize_date(published_at),
         "score": score,
         "comments": comments,
+        "rank": rank,
         "tags": [],
     }
 
@@ -858,9 +916,20 @@ def source_payload(source_key, items, latest_build_time=""):
 
 
 def rss_image(item):
-    media = item.find("media:content", NS)
-    if media is None:
-        media = item.find("media:thumbnail", NS)
+    # Collect all media:content URLs — pick the largest by width if multiple exist
+    candidates = []
+    for media in item.findall("media:content", NS):
+        url = media.attrib.get("url")
+        if url:
+            # Extract width from URL query param or path for sorting
+            m = re.search(r"width=(\d+)", url)
+            w = int(m.group(1)) if m else 0
+            candidates.append((w, url))
+    if candidates:
+        candidates.sort(key=lambda x: x[0])
+        return candidates[-1][1]  # largest width
+
+    media = item.find("media:thumbnail", NS)
     if media is not None and media.attrib.get("url"):
         return media.attrib["url"]
     for enclosure in item.findall("enclosure"):
@@ -1055,6 +1124,9 @@ def fetch_hn(source_key):
         ).decode("utf-8")
     )
 
+    # Build rank lookup: 1-indexed position on the HN front page
+    id_rank = {str(item_id): idx + 1 for idx, item_id in enumerate(ids)}
+
     def fetch_item(item_id):
         raw = fetch_url(
             f"https://hacker-news.firebaseio.com/v0/item/{item_id}.json",
@@ -1075,6 +1147,7 @@ def fetch_hn(source_key):
             score=item.get("score"),
             comments=item.get("descendants"),
             discussion_url=discussion_url,
+            rank=id_rank.get(str(item_id)),
         )
 
     items = []
@@ -1091,7 +1164,6 @@ def fetch_hn(source_key):
                     items.append(item)
         if len(items) >= target:
             break
-    id_rank = {str(item_id): idx for idx, item_id in enumerate(ids)}
     items.sort(key=lambda item: id_rank.get(item["id"].split(":")[-1], 999999))
     return source_payload(source_key, items, iso_now())
 
@@ -1313,6 +1385,25 @@ def create_flask_app():
         payload, status = preview_payload(request.args.get("url", ""))
         return json_response(payload, status=status)
 
+    @flask_app.get("/api/preview-image")
+    def flask_preview_image():
+        url = request.args.get("url", "")
+        if not url or not url.startswith(("http://", "https://")):
+            return json_response({"error": "invalid url"}, status=400)
+
+        now = time.time()
+        cached = IMAGE_CACHE.get(url)
+        if cached and now - cached[0] < IMAGE_CACHE_TTL:
+            return json_response({"image": cached[1]})
+
+        try:
+            image = fetch_preview_image(url)
+        except Exception:
+            image = ""
+
+        IMAGE_CACHE[url] = (now, image)
+        return json_response({"image": image})
+
     @flask_app.post("/api/translate")
     def flask_translate():
         if (request.content_length or 0) > 1_000_000:
@@ -1405,6 +1496,10 @@ class Handler(BaseHTTPRequestHandler):
             self.handle_preview(parsed)
             return
 
+        if parsed.path == "/api/preview-image":
+            self.handle_preview_image(parsed)
+            return
+
         self.serve_static(parsed.path)
 
     def do_POST(self):
@@ -1439,6 +1534,27 @@ class Handler(BaseHTTPRequestHandler):
             snippet = f"[预览不可用] {exc}"
             PREVIEW_CACHE[url] = (now, snippet)
             self.send_json_ok({"snippet": snippet})
+
+    def handle_preview_image(self, parsed):
+        query = urllib.parse.parse_qs(parsed.query)
+        url = query.get("url", [""])[0]
+        if not url or not url.startswith(("http://", "https://")):
+            self.send_json_error("invalid url", 400)
+            return
+
+        now = time.time()
+        cached = IMAGE_CACHE.get(url)
+        if cached and now - cached[0] < IMAGE_CACHE_TTL:
+            self.send_json_ok({"image": cached[1]})
+            return
+
+        try:
+            image = fetch_preview_image(url)
+            IMAGE_CACHE[url] = (now, image)
+            self.send_json_ok({"image": image})
+        except Exception:
+            IMAGE_CACHE[url] = (now, "")
+            self.send_json_ok({"image": ""})
 
     def send_json_ok(self, data):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")

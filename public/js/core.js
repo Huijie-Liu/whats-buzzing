@@ -29,7 +29,7 @@ export const SOURCES = [
 export const MAX_ITEMS_PER_TAB     = 50;
 export const READ_STORAGE_KEY      = "readArticleIds";
 export const THEME_STORAGE_KEY     = "themeMode";
-export const TRANSLATION_CACHE_KEY = "tlV2";
+export const TRANSLATION_CACHE_KEY = "tlV3";
 export const MAX_READ_IDS          = 2000;
 export const MAX_TRANSLATION_CACHE = 600;
 
@@ -215,13 +215,22 @@ export function escapeHtml(str) {
 
 // ---- Column grouping -----------------------------------------------------
 
-/** One entry per source in the active group, items sorted newest-first. */
+// Sources that are already ranked by the server (e.g. HN top stories,
+// Zhihu hot list) — preserve the server order instead of sorting by time.
+const RANKED_SOURCES = new Set(["hn", "zhihu"]);
+
+/** One entry per source in the active group.  Ranked sources keep
+ *  server order; the rest are sorted newest-first. */
 export function groupColumns() {
   return activeGroupSources().map((source) => {
-    const items = state.items
-      .filter((item) => item.source === source.key)
-      .sort((a, b) => (b.publishedAt || "").localeCompare(a.publishedAt || ""))
-      .slice(0, MAX_ITEMS_PER_TAB);
+    let items = state.items.filter((item) => item.source === source.key);
+    if (RANKED_SOURCES.has(source.key)) {
+      // Preserve server rank order (items already sorted by rank)
+      items.sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999));
+    } else {
+      items.sort((a, b) => (b.publishedAt || "").localeCompare(a.publishedAt || ""));
+    }
+    items = items.slice(0, MAX_ITEMS_PER_TAB);
     return { source: source.key, label: source.label, accent: source.accent, items };
   });
 }
