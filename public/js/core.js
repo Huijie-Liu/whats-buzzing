@@ -144,7 +144,7 @@ export function escapeHtml(str) {
 
 // Sources that are already ranked by the server (e.g. HN top stories,
 // Zhihu hot list) — preserve the server order instead of sorting by time.
-const RANKED_SOURCES = new Set(["hn", "zhihu"]);
+const RANKED_SOURCES = new Set(["hn", "zhihu", "google", "google_zh"]);
 
 /** One entry per source in the active group.  Ranked sources keep
  *  server order; the rest are sorted newest-first. */

@@ -1091,7 +1091,9 @@ def fetch_feed_collection(source_key, parser):
     feed_results.sort(key=lambda x: x[0])
     items = []
     for _, feed_items in feed_results:
-        items.extend(feed_items)
+        for it in feed_items:
+            it["rank"] = len(items) + 1
+            items.append(it)
     latest = max((normalize_date(value) for value in latest_values), default="")
     return source_payload(source_key, items, latest)
 
