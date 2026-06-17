@@ -298,7 +298,10 @@ class RateLimiter:
 
 
 SUMMARY_LIMITER = RateLimiter(max_calls=5, period=60)
-SUMMARY_MAX_ITEMS = 120
+# The feed can yield up to ~620 items (14 sources × up to 50 each), and the
+# frontend sends every loaded item to /api/summary. Cap above that ceiling so
+# a full feed never trips the limit; DeepSeek's context comfortably holds it.
+SUMMARY_MAX_ITEMS = 650
 
 
 # Networks the preview endpoints must never reach: RFC1918, loopback,
