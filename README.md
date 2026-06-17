@@ -13,6 +13,13 @@ python server.py
 
 默认地址是 `http://127.0.0.1:8765`。
 
+## 测试
+
+```bash
+. .venv/bin/activate
+python -m unittest discover -s tests
+```
+
 ## Vercel 部署
 
 项目已提供 Vercel 可识别的 Flask WSGI 入口：`server.py` 中的 `app`。

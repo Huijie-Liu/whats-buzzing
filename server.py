@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 import html
+import ipaddress
 import json
 import mimetypes
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -237,6 +240,157 @@ SOURCES = {
 LOCALIZED_REUTERS_PREFIXES = ("/es/", "/de/", "/fr/", "/pt/", "/ja/", "/zh-hans/")
 TAG_RE = re.compile(r"<[^>]+>")
 _cache = {}
+
+
+# =========================================================================
+# Infrastructure: TTL+LRU cache, rate limiter, SSRF guard
+# =========================================================================
+
+class TTLLRU:
+    """Tiny TTL + LRU cache.  Evicts the oldest entry when full and drops
+    expired entries on read.  Stored values may be anything — including
+    empty strings — since ``None`` is reserved as the miss sentinel."""
+
+    def __init__(self, ttl, maxsize):
+        self.ttl = ttl
+        self.maxsize = maxsize
+        self._store: OrderedDict = OrderedDict()
+
+    def get(self, key, now):
+        item = self._store.get(key)
+        if item is None:
+            return None
+        ts, value = item
+        if now - ts > self.ttl:
+            del self._store[key]
+            return None
+        self._store.move_to_end(key)
+        return value
+
+    def set(self, key, value, now):
+        self._store[key] = (now, value)
+        self._store.move_to_end(key)
+        while len(self._store) > self.maxsize:
+            self._store.popitem(last=False)
+
+
+class RateLimiter:
+    """Sliding-window per-key limiter backed by an in-process dict.  Good
+    enough to deter abuse on a single instance; state is not shared across
+    serverless replicas."""
+
+    def __init__(self, max_calls, period):
+        self.max_calls = max_calls
+        self.period = period
+        self._hits: dict = {}
+
+    def allow(self, key, now=None):
+        now = now if now is not None else time.time()
+        hits = [t for t in self._hits.get(key, []) if now - t < self.period]
+        if len(hits) >= self.max_calls:
+            self._hits[key] = hits
+            if len(self._hits) > 4096:
+                self._hits = {k: v for k, v in self._hits.items() if v}
+            return False
+        hits.append(now)
+        self._hits[key] = hits
+        return True
+
+
+SUMMARY_LIMITER = RateLimiter(max_calls=5, period=60)
+SUMMARY_MAX_ITEMS = 120
+
+
+# Networks the preview endpoints must never reach: RFC1918, loopback,
+# link-local (incl. cloud metadata), CGNAT, and the IPv6 equivalents.
+# NOTE: 198.18.0.0/15 (RFC 2544 benchmarking) is intentionally NOT blocked —
+# some local proxies (e.g. Clash fake-ip) resolve public domains into that
+# range, and blocking it would disable all previews in those environments.
+# 198.18/15 is not a routable internal-services range, so leaving it open
+# does not create an SSRF path.
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network(n) for n in (
+        "0.0.0.0/8",        # "this" network
+        "10.0.0.0/8",       # RFC1918
+        "100.64.0.0/10",    # CGNAT
+        "127.0.0.0/8",      # loopback
+        "169.254.0.0/16",   # link-local (incl. cloud metadata)
+        "172.16.0.0/12",    # RFC1918
+        "192.168.0.0/16",   # RFC1918
+        "224.0.0.0/4",      # multicast
+        "240.0.0.0/4",      # reserved
+        "::1/128",          # IPv6 loopback
+        "fc00::/7",         # IPv6 unique-local
+        "fe80::/10",        # IPv6 link-local
+    )
+]
+
+
+def _is_blocked_ip(ip):
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+    return any(addr in net for net in _BLOCKED_NETWORKS)
+
+
+def is_safe_url(url):
+    """Reject URLs whose host resolves to a private / loopback / link-local
+    IP.  Guards the preview endpoints against SSRF (e.g. clients pointing
+    the server at 169.254.169.254 or an internal service).  A DNS-rebinding
+    race between resolution and connection is still theoretically possible;
+    this stops the common case of a literal internal IP or hostname."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        if _is_blocked_ip(info[4][0]):
+            return False
+    return True
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects but re-validate every hop with ``is_safe_url`` so a
+    public URL can't 302 into an internal address."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not is_safe_url(newurl):
+            raise urllib.error.URLError("blocked redirect to unsafe url")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_SAFE_OPENER = urllib.request.build_opener(_SafeRedirectHandler)
+
+
+def client_ip_from_headers(headers, fallback=""):
+    """Originating client IP from the first ``X-Forwarded-For`` hop, falling
+    back to the socket peer address."""
+    xff = headers.get("X-Forwarded-For", "") if headers else ""
+    if xff:
+        first = xff.split(",")[0].strip()
+        if first:
+            return first
+    return fallback
+
+
+def debug_enabled():
+    """/api/debug is local-only by default; opt in on Vercel production via
+    ``ENABLE_DEBUG=1``."""
+    if os.environ.get("ENABLE_DEBUG"):
+        return True
+    return os.environ.get("VERCEL_ENV") not in ("production",)
 
 
 def read_json_file(path):
@@ -529,10 +683,10 @@ OG_IMAGE_RE = re.compile(
 P_TAG_RE = re.compile(r"<p[^>]*>(.+?)</p>", re.DOTALL | re.IGNORECASE)
 TITLE_RE = re.compile(r"<title[^>]*>(.+?)</title>", re.DOTALL | re.IGNORECASE)
 BODY_TEXT_RE = re.compile(r"<body[^>]*>(.*?)</body>", re.DOTALL | re.IGNORECASE)
-PREVIEW_CACHE: dict[str, tuple[float, str]] = {}
 PREVIEW_CACHE_TTL = 600
-IMAGE_CACHE: dict[str, tuple[float, str]] = {}
 IMAGE_CACHE_TTL = 3600
+PREVIEW_CACHE = TTLLRU(PREVIEW_CACHE_TTL, 500)
+IMAGE_CACHE = TTLLRU(IMAGE_CACHE_TTL, 500)
 
 
 def extract_snippet(html_text):
@@ -620,7 +774,7 @@ def fetch_preview_url(url):
         "Upgrade-Insecure-Requests": "1",
     }
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=12) as response:
+    with _SAFE_OPENER.open(request, timeout=12) as response:
         raw = response.read()
         content_type = response.headers.get("Content-Type", "")
         charset = "utf-8"
@@ -641,7 +795,7 @@ def fetch_preview_image(url):
         "DNT": "1",
     }
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with _SAFE_OPENER.open(request, timeout=10) as response:
         raw = response.read()
         content_type = response.headers.get("Content-Type", "")
         charset = "utf-8"
@@ -802,9 +956,7 @@ def parse_google_rss(source_key, meta, raw):
                 if title.endswith(suffix):
                     title = title[: -len(suffix)]
                     break
-        # Single-publisher feeds (e.g. AP) repeat the same publisher on every
-        # item, which is redundant with the column label — drop it there.
-        summary = publisher if meta.get("show_publisher", True) else ""
+        summary = publisher
         items.append(
             make_item(
                 source_key,
@@ -1127,20 +1279,44 @@ def parse_flask_query():
 def preview_payload(url):
     if not url or not url.startswith(("http://", "https://")):
         return {"error": "invalid url"}, 400
+    if not is_safe_url(url):
+        return {"error": "url not allowed"}, 403
 
     now = time.time()
-    cached = PREVIEW_CACHE.get(url)
-    if cached and now - cached[0] < PREVIEW_CACHE_TTL:
-        return {"snippet": cached[1]}, 200
+    cached = PREVIEW_CACHE.get(url, now)
+    if cached is not None:
+        return {"snippet": cached}, 200
 
     try:
         raw = fetch_preview_url(url)
         snippet = extract_snippet(raw)
     except Exception as exc:
-        snippet = f"[预览不可用] {exc}"
+        # Don't cache failures — a transient blip shouldn't pin a
+        # "preview unavailable" message for the full TTL.
+        return {"snippet": f"[预览不可用] {exc}"}, 200
 
-    PREVIEW_CACHE[url] = (now, snippet)
+    PREVIEW_CACHE.set(url, snippet, now)
     return {"snippet": snippet}, 200
+
+
+def preview_image_payload(url):
+    if not url or not url.startswith(("http://", "https://")):
+        return {"error": "invalid url"}, 400
+    if not is_safe_url(url):
+        return {"error": "url not allowed"}, 403
+
+    now = time.time()
+    cached = IMAGE_CACHE.get(url, now)
+    if cached is not None:
+        return {"image": cached}, 200
+
+    try:
+        image = fetch_preview_image(url)
+    except Exception:
+        image = ""
+    # Cache the (possibly empty) result so repeated lookups are free.
+    IMAGE_CACHE.set(url, image, now)
+    return {"image": image}, 200
 
 
 def create_flask_app():
@@ -1157,6 +1333,8 @@ def create_flask_app():
 
     @flask_app.get("/api/debug")
     def flask_debug():
+        if not debug_enabled():
+            abort(404)
         return json_response({
             "has_deepseek_key": bool(DEEPSEEK_KEY),
             "has_claude_token": bool(CLAUDE_DEEPSEEK.get("token")),
@@ -1202,32 +1380,24 @@ def create_flask_app():
 
     @flask_app.get("/api/preview-image")
     def flask_preview_image():
-        url = request.args.get("url", "")
-        if not url or not url.startswith(("http://", "https://")):
-            return json_response({"error": "invalid url"}, status=400)
-
-        now = time.time()
-        cached = IMAGE_CACHE.get(url)
-        if cached and now - cached[0] < IMAGE_CACHE_TTL:
-            return json_response({"image": cached[1]})
-
-        try:
-            image = fetch_preview_image(url)
-        except Exception:
-            image = ""
-
-        IMAGE_CACHE[url] = (now, image)
-        return json_response({"image": image})
+        payload, status = preview_image_payload(request.args.get("url", ""))
+        return json_response(payload, status=status)
 
     @flask_app.post("/api/summary")
     def flask_summary():
         if (request.content_length or 0) > 2_000_000:
             return json_response({"error": "request too large"}, status=413)
 
+        ip = client_ip_from_headers(request.headers, request.remote_addr or "")
+        if not SUMMARY_LIMITER.allow(ip):
+            return json_response({"error": "请求过于频繁，请稍后再试"}, status=429)
+
         payload = request.get_json(silent=True) or {}
         items = payload.get("items", [])
         if not isinstance(items, list):
             return json_response({"error": "Invalid items"}, status=400)
+        if len(items) > SUMMARY_MAX_ITEMS:
+            return json_response({"error": "items 过多"}, status=400)
 
         def generate():
             clean_items = [item for item in items if isinstance(item, dict)]
@@ -1306,46 +1476,20 @@ class Handler(BaseHTTPRequestHandler):
     def handle_preview(self, parsed):
         query = urllib.parse.parse_qs(parsed.query)
         url = query.get("url", [""])[0]
-        if not url or not url.startswith(("http://", "https://")):
-            self.send_json_error("invalid url", 400)
-            return
-
-        now = time.time()
-        cached = PREVIEW_CACHE.get(url)
-        if cached and now - cached[0] < PREVIEW_CACHE_TTL:
-            self.send_json_ok({"snippet": cached[1]})
-            return
-
-        try:
-            raw = fetch_preview_url(url)
-            snippet = extract_snippet(raw)
-            PREVIEW_CACHE[url] = (now, snippet)
-            self.send_json_ok({"snippet": snippet})
-        except Exception as exc:
-            snippet = f"[预览不可用] {exc}"
-            PREVIEW_CACHE[url] = (now, snippet)
-            self.send_json_ok({"snippet": snippet})
+        payload, status = preview_payload(url)
+        if status == 200:
+            self.send_json_ok(payload)
+        else:
+            self.send_json_error(payload.get("error", "error"), status)
 
     def handle_preview_image(self, parsed):
         query = urllib.parse.parse_qs(parsed.query)
         url = query.get("url", [""])[0]
-        if not url or not url.startswith(("http://", "https://")):
-            self.send_json_error("invalid url", 400)
-            return
-
-        now = time.time()
-        cached = IMAGE_CACHE.get(url)
-        if cached and now - cached[0] < IMAGE_CACHE_TTL:
-            self.send_json_ok({"image": cached[1]})
-            return
-
-        try:
-            image = fetch_preview_image(url)
-            IMAGE_CACHE[url] = (now, image)
-            self.send_json_ok({"image": image})
-        except Exception:
-            IMAGE_CACHE[url] = (now, "")
-            self.send_json_ok({"image": ""})
+        payload, status = preview_image_payload(url)
+        if status == 200:
+            self.send_json_ok(payload)
+        else:
+            self.send_json_error(payload.get("error", "error"), status)
 
     def send_json_ok(self, data):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -1375,6 +1519,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(413)
             return
 
+        ip = client_ip_from_headers(
+            self.headers, self.client_address[0] if self.client_address else ""
+        )
+        if not SUMMARY_LIMITER.allow(ip):
+            self.send_json_error("请求过于频繁，请稍后再试", 429)
+            return
+
         try:
             raw = self.rfile.read(length) if length else b"{}"
             payload = json.loads(raw.decode("utf-8"))
@@ -1385,6 +1536,9 @@ class Handler(BaseHTTPRequestHandler):
         items = payload.get("items", [])
         if not isinstance(items, list):
             self.send_error(400, "Invalid items")
+            return
+        if len(items) > SUMMARY_MAX_ITEMS:
+            self.send_json_error("items 过多", 400)
             return
 
         self.send_response(200)

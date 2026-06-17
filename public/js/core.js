@@ -15,6 +15,7 @@ export const SOURCES = [
   { key: "bloomberg",  label: "彭博社",       accent: "#0068ff", group: "news" },
   { key: "guardian",   label: "卫报",         accent: "#052962", group: "news" },
   { key: "bbc",        label: "BBC",          accent: "#b80000", group: "news" },
+  { key: "washingtonpost", label: "华盛顿邮报", accent: "#1a1a1a", group: "news" },
   { key: "zhihu",      label: "知乎热榜",     accent: "#0066ff", group: "hot" },
   { key: "hn",         label: "Hacker News",  accent: "#f0652f", group: "hot" },
   { key: "google",     label: "Google News 美国", accent: "#1a73e8", group: "hot" },
@@ -108,7 +109,7 @@ export function setActiveGroup(groupKey) {
 
 // ---- Utilities -----------------------------------------------------------
 
-export function escapeText(value) {
+export function toText(value) {
   return String(value ?? "");
 }
 

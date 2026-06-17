@@ -4,7 +4,7 @@
 
 import {
   state, SOURCES, SOURCE_GROUPS,
-  escapeText, formatRelativeTime, isLiveTitle, escapeHtml,
+  toText, formatRelativeTime, isLiveTitle, escapeHtml,
   activeGroupSources, sourceCount, setActiveGroup,
   findItemById, markRead,
   groupColumns, displayedItems,
@@ -128,7 +128,7 @@ function renderArticle(item) {
   // --- Title ---
   const title = node.querySelector(".title");
   title.href = mainUrl;
-  title.textContent = escapeText(item.title || item.summary || "Untitled");
+  title.textContent = toText(item.title || item.summary || "Untitled");
   if (isLiveTitle(item.title || "")) {
     const badge = document.createElement("span");
     badge.className = "live-badge";
@@ -140,7 +140,7 @@ function renderArticle(item) {
   // --- Summary ---
   const summary = node.querySelector(".summary");
   const summaryText = item.summary || "";
-  summary.textContent = escapeText(summaryText);
+  summary.textContent = toText(summaryText);
   summary.hidden = !summaryText;
 
   // --- Links row ---
