@@ -15,6 +15,7 @@ import {
   setFeedStateHandler,
   summaryState,
   startSummaryFetch,
+  regenerateSummary,
   setSummaryRefreshHandler,
 } from './api.js';
 
@@ -98,6 +99,7 @@ function renderArticle(item) {
     media.href = mainUrl;
     media.addEventListener("click", () => tryMarkRead(item, node));
     img.src = item.image;
+    img.alt = toText(item.title || item.summary || "");
     img.onerror = () => {
       img.remove();
       const err = document.createElement("div");
@@ -114,16 +116,10 @@ function renderArticle(item) {
     }
   }
 
-  // --- Source label ---
-  node.querySelector(".source").textContent = item.sourceLabel;
-
-  // --- Time ---
+  // --- Time (rendered in the links row) ---
   const time = node.querySelector("time");
   time.textContent = formatRelativeTime(item.publishedAt);
   if (item.publishedAt) time.dateTime = item.publishedAt;
-
-  // Remove unused HN stat placeholder
-  node.querySelector(".hn-stat")?.remove();
 
   // --- Title ---
   const title = node.querySelector(".title");
@@ -325,6 +321,8 @@ function applyLazyImage(node, imageUrl) {
     img.loading = "lazy";
     media.appendChild(img);
   }
+  const item = findItemById(node.dataset.itemId);
+  img.alt = toText(item?.title || item?.summary || "");
   img.src = imageUrl;
   img.onerror = () => {
     img.remove();
@@ -473,8 +471,44 @@ function resetFeedScroll() {
 // AI Summary modal
 // =========================================================================
 
+// Focus management for overlay dialogs (a11y: focus move-in, trap, restore)
+const focusStack = [];
+
+function trapFocus(e) {
+  if (e.key !== "Tab") return;
+  const overlay = e.currentTarget;
+  const f = [...overlay.querySelectorAll(
+    'a[href],button:not([disabled]),input:not([disabled]),[tabindex]:not([tabindex="-1"])'
+  )].filter((el) => el.offsetParent !== null);
+  if (!f.length) return;
+  const first = f[0];
+  const last  = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+function mountOverlay(overlay) {
+  focusStack.push(document.activeElement);
+  overlay.tabIndex = -1;
+  overlay.addEventListener("keydown", trapFocus);
+}
+
+function unmountOverlay(overlay) {
+  overlay.removeEventListener("keydown", trapFocus);
+  const prev = focusStack.pop();
+  if (prev && typeof prev.focus === "function") {
+    try { prev.focus(); } catch { /* ignore */ }
+  }
+}
+
 function dismissSummaryModal() {
   if (summaryState.modal) {
+    unmountOverlay(summaryState.modal);
     summaryState.modal.remove();
     summaryState.modal = null;
   }
@@ -501,12 +535,20 @@ function buildSummaryBody() {
            </div>`;
   }
   if (summaryState.text) {
-    return `<div class="summary-text">${renderSummaryMarkdown(summaryState.text)}</div>`;
+    const { toc, html } = parseSummary(summaryState.text);
+    const nav = toc.length > 1
+      ? `<nav class="summary-toc" aria-label="板块导航">${toc.map((s) =>
+          `<button class="toc-chip" type="button" data-target="${s.id}">${s.label}</button>`
+        ).join("")}</nav>`
+      : "";
+    return `${nav}<div class="summary-text">${html}</div>`;
   }
   return '<div class="summary-text">当前没有可总结的内容。</div>';
 }
 
-function renderSummaryMarkdown(text) {
+// Parse the streamed markdown-ish text into section blocks.
+// Returns { toc: [{id,label}], html: string }.
+function parseSummary(text) {
   let html = escapeHtml(text);
 
   // Citations: [0] [1][2] -> inline badges
@@ -519,32 +561,52 @@ function renderSummaryMarkdown(text) {
   // Cluster consecutive badges
   html = html.replace(/((?:<a class="cite-badge"[^>]*>.*?<\/a>[^\S\n]*)+)/g, '<span class="cite-cluster">$1</span>');
 
-  // Bold
+  // Bold (**heading**)
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
   // Sections split by double-newline
   const sections = html.split(/\n\n+/);
-  const blocks = sections.map((section) => {
+  const toc = [];
+  const blocks = sections.map((section, i) => {
     section = section.trim();
     if (!section) return "";
 
     const lines = section.split(/\n/);
     const heading = lines[0].trim();
     const bodyLines = lines.slice(1);
+    const id = `sum-sec-${i}`;
+    if (heading) toc.push({ id, label: heading.replace(/<[^>]+>/g, "") });
 
     if (!bodyLines.length) {
-      return `<div class="summary-section">${heading}</div>`;
+      return `<div class="summary-section" id="${id}">${heading}</div>`;
     }
 
-    const items = bodyLines.map((line) => {
-      const content = line.trim().replace(/^[-•]\s*/, "");
-      return `<li>${content}</li>`;
-    }).join("");
+    // Bullet lines ("- "/"• ") become <li>; other lines become <p> (e.g. Leaders analysis).
+    let body = "";
+    let bullets = [];
+    const flush = () => {
+      if (bullets.length) { body += `<ul>${bullets.join("")}</ul>`; bullets = []; }
+    };
+    for (const line of bodyLines) {
+      const t = line.trim();
+      if (!t) continue;
+      if (/^[-•]\s*/.test(t)) {
+        bullets.push(`<li>${t.replace(/^[-•]\s*/, "")}</li>`);
+      } else {
+        flush();
+        body += `<p>${t}</p>`;
+      }
+    }
+    flush();
 
-    return `<div class="summary-section">${heading}<ul>${items}</ul></div>`;
+    return `<div class="summary-section" id="${id}">${heading}${body}</div>`;
   });
 
-  return blocks.filter(Boolean).join("");
+  return { toc, html: blocks.filter(Boolean).join("") };
+}
+
+function renderSummaryMarkdown(text) {
+  return parseSummary(text).html;
 }
 
 function refreshModalBody() {
@@ -552,16 +614,21 @@ function refreshModalBody() {
   const body = summaryState.modal.querySelector(".summary-card-body");
   if (body) body.innerHTML = buildSummaryBody();
 
-  const header = summaryState.modal.querySelector(".summary-card-header span");
-  if (header) {
+  const title = summaryState.modal.querySelector(".summary-title");
+  if (title) {
     if (summaryState.loading) {
-      header.innerHTML = '<span class="summary-spinner"></span> AI 正在生成今日要闻总结...';
+      title.innerHTML = '<span class="summary-spinner"></span> AI 正在生成今日要闻总结...';
     } else if (summaryState.error) {
-      header.textContent = '⚠️ 总结生成失败';
+      title.textContent = '⚠️ 总结生成失败';
     } else {
-      header.textContent = '✨ AI 今日要闻总结';
+      title.textContent = '✨ AI 今日要闻总结';
     }
   }
+
+  const copy  = summaryState.modal.querySelector("#summaryCopy");
+  const regen = summaryState.modal.querySelector("#summaryRegen");
+  if (copy)  copy.disabled  = summaryState.loading || !summaryState.text;
+  if (regen) regen.disabled = summaryState.loading;
 }
 
 function buildSummaryModal() {
@@ -569,6 +636,9 @@ function buildSummaryModal() {
 
   const modal = document.createElement("div");
   modal.className = "summary-overlay";
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-labelledby", "summary-title");
   summaryState.modal = modal;
 
   const statusIcon = summaryState.loading
@@ -582,8 +652,12 @@ function buildSummaryModal() {
   modal.innerHTML = `
     <div class="summary-card">
       <div class="summary-card-header">
-        <span>${statusIcon} ${headerText}</span>
-        <button class="summary-close" type="button" aria-label="关闭">✕</button>
+        <span class="summary-title" id="summary-title">${statusIcon} ${headerText}</span>
+        <div class="summary-actions">
+          <button class="summary-action" id="summaryCopy" type="button" aria-label="复制总结" title="复制">⧉</button>
+          <button class="summary-action" id="summaryRegen" type="button" aria-label="重新生成" title="重新生成">↻</button>
+          <button class="summary-close" type="button" aria-label="关闭">✕</button>
+        </div>
       </div>
       <div class="summary-card-body">${buildSummaryBody()}</div>
     </div>`;
@@ -593,11 +667,41 @@ function buildSummaryModal() {
     if (e.target === modal) dismissSummaryModal();
   });
 
+  // Copy / regenerate actions
+  const copyBtn = modal.querySelector("#summaryCopy");
+  copyBtn.addEventListener("click", async () => {
+    const text = summaryState.text || "";
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      copyBtn.classList.add("copied");
+      copyBtn.title = "已复制";
+      setTimeout(() => { copyBtn.classList.remove("copied"); copyBtn.title = "复制"; }, 1200);
+    } catch { /* clipboard unavailable */ }
+  });
+  const regenBtn = modal.querySelector("#summaryRegen");
+  regenBtn.addEventListener("click", () => {
+    if (!summaryState.loading) regenerateSummary();
+  });
+
+  // TOC chip clicks (delegated) -> scroll to section
+  const body = modal.querySelector(".summary-card-body");
+  body.addEventListener("click", (e) => {
+    const chip = e.target.closest(".toc-chip");
+    if (!chip) return;
+    const target = body.querySelector(`#${chip.dataset.target}`);
+    target?.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
+
   document.body.appendChild(modal);
+  mountOverlay(modal);
+  modal.querySelector(".summary-close").focus();
+
+  // Sync action-button disabled states
+  refreshModalBody();
 
   // Auto-scroll while streaming
   if (summaryState.loading) {
-    const body = modal.querySelector(".summary-card-body");
     const observer = new MutationObserver(() => { body.scrollTop = body.scrollHeight; });
     observer.observe(body, { childList: true, characterData: true, subtree: true });
     const check = setInterval(() => {
@@ -763,7 +867,7 @@ function isTypingTarget(el) {
 
 function toggleHelp() {
   const existing = document.querySelector(".kbd-help");
-  if (existing) { existing.remove(); return; }
+  if (existing) { unmountOverlay(existing); existing.remove(); return; }
   const rows = [
     ["j / k", "本列下一篇 / 上一篇"], ["h / l", "上一列 / 下一列"],
     ["Enter", "打开选中文章"], ["1 / 2 / 3", "新闻 / 热点 / 深度"],
@@ -773,13 +877,18 @@ function toggleHelp() {
   ];
   const overlay = document.createElement("div");
   overlay.className = "kbd-help";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-labelledby", "kbd-title");
   overlay.innerHTML =
     '<div class="kbd-card">' +
-    '<div class="kbd-title">键盘快捷键</div>' +
+    '<div class="kbd-title" id="kbd-title">键盘快捷键</div>' +
     rows.map((r) => `<div class="kbd-row"><kbd>${r[0]}</kbd><span>${r[1]}</span></div>`).join("") +
     '</div>';
-  overlay.addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) { unmountOverlay(overlay); overlay.remove(); } });
   document.body.appendChild(overlay);
+  mountOverlay(overlay);
+  overlay.focus();
 }
 
 function handleVimKey(e) {
