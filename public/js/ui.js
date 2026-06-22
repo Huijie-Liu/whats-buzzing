@@ -99,13 +99,9 @@ function renderArticle(item) {
     media.href = mainUrl;
     media.addEventListener("click", () => tryMarkRead(item, node));
     img.src = item.image;
-    img.alt = toText(item.title || item.summary || "");
     img.onerror = () => {
-      img.remove();
-      const err = document.createElement("div");
-      err.className = "media-error";
-      err.textContent = "无图";
-      media.appendChild(err);
+      media.remove();
+      node.classList.remove("has-image");
     };
   } else {
     media.remove();
@@ -317,19 +313,15 @@ function applyLazyImage(node, imageUrl) {
   let img = media.querySelector("img");
   if (!img) {
     img = document.createElement("img");
-    img.alt = "";
     img.loading = "lazy";
     media.appendChild(img);
   }
   const item = findItemById(node.dataset.itemId);
-  img.alt = toText(item?.title || item?.summary || "");
   img.src = imageUrl;
   img.onerror = () => {
-    img.remove();
-    const err = document.createElement("div");
-    err.className = "media-error";
-    err.textContent = "无图";
-    media.appendChild(err);
+    media.remove();
+    node.classList.remove("has-image");
+    node.classList.remove("lazy-image-loaded");
   };
 
   node.classList.add("has-image");

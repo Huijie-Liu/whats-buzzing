@@ -437,16 +437,6 @@ h1 {
   }
 }
 
-.media-error {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 130px;
-  background: var(--soft);
-  color: var(--muted);
-  font-size: 13px;
-}
-
 /* ---- Card: Body ---- */
 
 .story-body {
