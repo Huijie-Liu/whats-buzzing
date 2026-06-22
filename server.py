@@ -69,7 +69,7 @@ SOURCES = {
         "kind": "hn",
         "home": "https://news.ycombinator.com/",
         "accent": "#f0652f",
-        "story_limit": 50,
+        "story_limit": 20,
     },
     "economist": {
         "label": "经济学人",
@@ -77,7 +77,7 @@ SOURCES = {
         "kind": "rss",
         "home": "https://www.economist.com/latest",
         "accent": "#d71920",
-        "story_limit": 50,
+        "story_limit": 20,
         "feeds": ["https://www.economist.com/latest/rss.xml"],
     },
     "reuters": {
@@ -86,7 +86,7 @@ SOURCES = {
         "kind": "reuters_sitemap",
         "home": "https://www.reuters.com/",
         "accent": "#ff8000",
-        "story_limit": 50,
+        "story_limit": 20,
         "feeds": [
             "https://www.reuters.com/arc/outboundfeeds/news-sitemap/?outputType=xml",
             "https://www.reuters.com/arc/outboundfeeds/news-sitemap/?outputType=xml&from=100",
@@ -99,7 +99,7 @@ SOURCES = {
         "kind": "rss",
         "home": "https://www.bloomberg.com/",
         "accent": "#0068ff",
-        "story_limit": 50,
+        "story_limit": 20,
         "feeds": [
             "https://feeds.bloomberg.com/markets/news.rss",
             "https://feeds.bloomberg.com/economics/news.rss",
@@ -118,7 +118,7 @@ SOURCES = {
         "kind": "rss",
         "home": "https://www.theguardian.com/",
         "accent": "#052962",
-        "story_limit": 50,
+        "story_limit": 20,
         "feeds": [
             "https://www.theguardian.com/world/rss",
             "https://www.theguardian.com/us-news/rss",
@@ -134,7 +134,7 @@ SOURCES = {
         "kind": "rss",
         "home": "https://www.bbc.com/news",
         "accent": "#b80000",
-        "story_limit": 50,
+        "story_limit": 20,
         "feeds": [
             "https://feeds.bbci.co.uk/news/world/rss.xml",
             "https://feeds.bbci.co.uk/news/uk/rss.xml",
@@ -150,7 +150,7 @@ SOURCES = {
         "kind": "atom",
         "home": "https://www.theverge.com/",
         "accent": "#e2127a",
-        "story_limit": 30,
+        "story_limit": 20,
         "feeds": ["https://www.theverge.com/rss/index.xml"],
     },
     "google": {
@@ -159,7 +159,7 @@ SOURCES = {
         "kind": "google_rss",
         "home": "https://news.google.com/topstories?hl=en-US&gl=US&ceid=US:en",
         "accent": "#1a73e8",
-        "story_limit": 50,
+        "story_limit": 20,
         "feeds": [
             "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
             "https://news.google.com/rss/headlines/section/topic/WORLD?hl=en-US&gl=US&ceid=US:en",
@@ -176,7 +176,7 @@ SOURCES = {
         "kind": "google_rss",
         "home": "https://news.google.com/topstories?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
         "accent": "#34a853",
-        "story_limit": 50,
+        "story_limit": 20,
         "feeds": [
             "https://news.google.com/rss?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
             "https://news.google.com/rss/headlines/section/topic/WORLD?hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
@@ -193,6 +193,7 @@ SOURCES = {
         "kind": "atom",
         "home": "https://www.theatlantic.com/",
         "accent": "#111111",
+        "story_limit": 20,
         "feeds": ["https://www.theatlantic.com/feed/all/"],
     },
     "newyorker": {
@@ -201,7 +202,7 @@ SOURCES = {
         "kind": "rss",
         "home": "https://www.newyorker.com/",
         "accent": "#e60000",
-        "story_limit": 30,
+        "story_limit": 20,
         "feeds": ["https://www.newyorker.com/feed/everything"],
     },
     "mit_tech": {
@@ -210,7 +211,7 @@ SOURCES = {
         "kind": "rss",
         "home": "https://www.technologyreview.com/",
         "accent": "#ff5a00",
-        "story_limit": 30,
+        "story_limit": 20,
         "feeds": ["https://www.technologyreview.com/feed/"],
     },
     "zhihu": {
@@ -219,7 +220,7 @@ SOURCES = {
         "kind": "zhihu",
         "home": "https://www.zhihu.com/hot",
         "accent": "#0066ff",
-        "story_limit": 30,
+        "story_limit": 20,
     },
     "washingtonpost": {
         "label": "华盛顿邮报",
@@ -227,7 +228,7 @@ SOURCES = {
         "kind": "rss",
         "home": "https://www.washingtonpost.com/",
         "accent": "#1a1a1a",
-        "story_limit": 50,
+        "story_limit": 20,
         "feeds": [
             "https://feeds.washingtonpost.com/rss/world",
             "https://feeds.washingtonpost.com/rss/national",
@@ -242,7 +243,7 @@ SOURCES = {
         "kind": "discourse",
         "home": "https://linux.do/new",
         "accent": "#0088cc",
-        "story_limit": 30,
+        "story_limit": 20,
         "feeds": ["https://linux.do/latest.rss"],
         "headers": {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -255,7 +256,7 @@ SOURCES = {
         "kind": "discourse",
         "home": "https://linux.do/top",
         "accent": "#0a8ed6",
-        "story_limit": 30,
+        "story_limit": 20,
         "feeds": ["https://linux.do/top/daily.rss"],
         "headers": {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -914,7 +915,7 @@ def dedupe_items(items):
 def source_payload(source_key, items, latest_build_time=""):
     meta = SOURCES[source_key]
     items = dedupe_items(items)
-    limit = meta.get("story_limit", 50)
+    limit = meta.get("story_limit", 20)
     if limit and len(items) > limit:
         items = items[:limit]
     return {
@@ -1175,7 +1176,7 @@ def fetch_feed_collection(source_key, parser):
 
 def fetch_hn(source_key):
     meta = SOURCES[source_key]
-    target = meta.get("story_limit", 50)
+    target = meta.get("story_limit", 20)
     ids = json.loads(
         fetch_url(
             "https://hacker-news.firebaseio.com/v0/topstories.json",
@@ -1264,7 +1265,7 @@ def fetch_zhihu(source_key):
             score=int(re.sub(r"[^\d]", "", entry.get("detail_text", "0")) or 0) or None,
         ))
 
-    target = meta.get("story_limit", 30)
+    target = meta.get("story_limit", 20)
     return source_payload(source_key, items[:target], iso_now())
 
 
