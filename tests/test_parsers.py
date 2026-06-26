@@ -3,6 +3,7 @@
 Run with:  python -m unittest discover -s tests
 (uses only the stdlib — no extra dependencies)."""
 
+import os
 import unittest
 
 from server import (
@@ -13,6 +14,7 @@ from server import (
     parse_reuters_sitemap,
     parse_discourse,
     zhihu_item_url,
+    zhihu_score,
     normalize_date,
     upscale_image_url,
     extract_snippet,
@@ -20,6 +22,9 @@ from server import (
     dedupe_items,
     make_item,
     RateLimiter,
+    TTLLRU,
+    client_ip_from_headers,
+    debug_enabled,
 )
 
 
@@ -212,6 +217,28 @@ class ZhihuHelperTests(unittest.TestCase):
         self.assertEqual(zhihu_item_url("not a url"), "not a url")
 
 
+class ZhihuScoreTests(unittest.TestCase):
+    def test_wan_multiplier(self):
+        self.assertEqual(zhihu_score("5234 万热度"), 52340000)
+
+    def test_wan_without_space(self):
+        self.assertEqual(zhihu_score("5234万热度"), 52340000)
+
+    def test_plain_number(self):
+        self.assertEqual(zhihu_score("12345 热度"), 12345)
+
+    def test_comma_thousands(self):
+        self.assertEqual(zhihu_score("1,234 万热度"), 12340000)
+
+    def test_none_for_missing(self):
+        self.assertIsNone(zhihu_score(""))
+        self.assertIsNone(zhihu_score(None))
+        self.assertIsNone(zhihu_score("无热度"))
+
+    def test_zero_returns_none(self):
+        self.assertIsNone(zhihu_score("0 热度"))
+
+
 class UtilityTests(unittest.TestCase):
     def test_normalize_date_iso_and_rfc822(self):
         self.assertEqual(normalize_date("2025-06-16T09:00:00Z"), "2025-06-16T09:00:00Z")
@@ -272,6 +299,100 @@ class RateLimiterTests(unittest.TestCase):
         self.assertTrue(lim.allow("ip1", now=105.0))
         self.assertFalse(lim.allow("ip1", now=109.0))  # still inside window
         self.assertTrue(lim.allow("ip1", now=111.0))   # window slid past t=100
+
+    def test_prunes_stale_keys(self):
+        lim = RateLimiter(max_calls=5, period=10)
+        for i in range(1000):
+            lim.allow(f"ip{i}", now=0.0)
+        # After a sweep (triggered once per period), all stale keys at t=0
+        # must be gone once we advance past the period.
+        lim.allow("fresh", now=100.0)
+        # Re-allowing an old key must behave as a fresh start, not a block.
+        self.assertTrue(lim.allow("ip0", now=100.0))
+
+
+class TTLLRUTests(unittest.TestCase):
+    def test_miss_returns_none(self):
+        c = TTLLRU(ttl=10, maxsize=4)
+        self.assertIsNone(c.get("x", now=0))
+
+    def test_set_then_get(self):
+        c = TTLLRU(ttl=10, maxsize=4)
+        c.set("a", "v", now=0)
+        self.assertEqual(c.get("a", now=1), "v")
+
+    def test_expires_after_ttl(self):
+        c = TTLLRU(ttl=10, maxsize=4)
+        c.set("a", "v", now=0)
+        self.assertIsNone(c.get("a", now=11))
+
+    def test_lru_eviction_evicts_oldest_unused(self):
+        c = TTLLRU(ttl=100, maxsize=2)
+        c.set("a", 1, now=0)
+        c.set("b", 2, now=0)
+        c.get("a", now=1)  # touch a -> b becomes oldest
+        c.set("c", 3, now=2)  # over capacity -> evict b
+        self.assertEqual(c.get("a", now=3), 1)
+        self.assertIsNone(c.get("b", now=3))
+        self.assertEqual(c.get("c", now=3), 3)
+
+    def test_stores_empty_string(self):
+        c = TTLLRU(ttl=10, maxsize=4)
+        c.set("a", "", now=0)
+        self.assertEqual(c.get("a", now=1), "")
+
+
+class ClientIpTests(unittest.TestCase):
+    def test_xff_rightmost_hop(self):
+        # Spoofed left hop + proxy-appended real IP -> take the rightmost.
+        h = {"X-Forwarded-For": "1.2.3.4, 5.6.7.8"}
+        self.assertEqual(client_ip_from_headers(h, "peer"), "5.6.7.8")
+
+    def test_xff_single_hop(self):
+        h = {"X-Forwarded-For": "1.2.3.4"}
+        self.assertEqual(client_ip_from_headers(h, "peer"), "1.2.3.4")
+
+    def test_prefers_vercel_header(self):
+        h = {"x-vercel-forwarded-for": "9.9.9.9", "X-Forwarded-For": "1.2.3.4"}
+        self.assertEqual(client_ip_from_headers(h, "peer"), "9.9.9.9")
+
+    def test_prefers_real_ip_over_xff(self):
+        h = {"x-real-ip": "8.8.8.8", "X-Forwarded-For": "1.2.3.4"}
+        self.assertEqual(client_ip_from_headers(h, "peer"), "8.8.8.8")
+
+    def test_fallback_when_no_headers(self):
+        self.assertEqual(client_ip_from_headers({}, "peer"), "peer")
+
+    def test_fallback_when_none(self):
+        self.assertEqual(client_ip_from_headers(None, "peer"), "peer")
+
+
+class DebugEnabledTests(unittest.TestCase):
+    def setUp(self):
+        self._saved_env = dict(os.environ)
+        os.environ.pop("ENABLE_DEBUG", None)
+        os.environ.pop("VERCEL_ENV", None)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._saved_env)
+
+    def test_default_enabled(self):
+        self.assertTrue(debug_enabled())
+
+    def test_disabled_in_production(self):
+        os.environ["VERCEL_ENV"] = "production"
+        self.assertFalse(debug_enabled())
+
+    def test_enable_debug_zero_does_not_enable_in_production(self):
+        os.environ["VERCEL_ENV"] = "production"
+        os.environ["ENABLE_DEBUG"] = "0"
+        self.assertFalse(debug_enabled())
+
+    def test_enable_debug_one_enables_in_production(self):
+        os.environ["VERCEL_ENV"] = "production"
+        os.environ["ENABLE_DEBUG"] = "1"
+        self.assertTrue(debug_enabled())
 
 
 if __name__ == "__main__":

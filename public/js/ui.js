@@ -989,13 +989,6 @@ function bindEvents() {
 
   // Keyboard
   document.addEventListener("keydown", handleVimKey);
-
-  // Escape key also closes summary modal
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && summaryState.modal) {
-      dismissSummaryModal();
-    }
-  });
 }
 
 // =========================================================================

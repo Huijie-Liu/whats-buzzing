@@ -2,7 +2,6 @@
 import html
 import ipaddress
 import json
-import mimetypes
 import os
 import re
 import socket
@@ -15,7 +14,6 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 try:
@@ -267,6 +265,9 @@ SOURCES = {
 
 LOCALIZED_REUTERS_PREFIXES = ("/es/", "/de/", "/fr/", "/pt/", "/ja/", "/zh-hans/")
 TAG_RE = re.compile(r"<[^>]+>")
+# Module-level feed cache. Read-check-write isn't atomic, so under heavy
+# concurrency a source may occasionally be fetched twice — acceptable at
+# this scale, and the TTL keeps duplicates cheap.
 _cache = {}
 
 
@@ -305,30 +306,37 @@ class TTLLRU:
 class RateLimiter:
     """Sliding-window per-key limiter backed by an in-process dict.  Good
     enough to deter abuse on a single instance; state is not shared across
-    serverless replicas."""
+    serverless replicas.  Not fully thread-safe — under heavy concurrency a
+    request may occasionally slip through, which is acceptable at this scale."""
 
     def __init__(self, max_calls, period):
         self.max_calls = max_calls
         self.period = period
         self._hits: dict = {}
+        self._sweep_at = 0.0
 
     def allow(self, key, now=None):
         now = now if now is not None else time.time()
         hits = [t for t in self._hits.get(key, []) if now - t < self.period]
-        if len(hits) >= self.max_calls:
-            self._hits[key] = hits
-            if len(self._hits) > 4096:
-                self._hits = {k: v for k, v in self._hits.items() if v}
-            return False
-        hits.append(now)
+        blocked = len(hits) >= self.max_calls
+        if not blocked:
+            hits.append(now)
         self._hits[key] = hits
-        return True
+        # Sweep stale keys once per period so the dict can't grow unboundedly
+        # under low-rate traffic from many distinct clients.
+        if now >= self._sweep_at:
+            self._hits = {
+                k: v for k, v in self._hits.items()
+                if v and now - v[-1] < self.period
+            }
+            self._sweep_at = now + self.period
+        return not blocked
 
 
 SUMMARY_LIMITER = RateLimiter(max_calls=5, period=60)
-# The feed can yield up to ~620 items (14 sources × up to 50 each), and the
-# frontend sends every loaded item to /api/summary. Cap above that ceiling so
-# a full feed never trips the limit; DeepSeek's context comfortably holds it.
+# 16 sources × story_limit 20 = 320 items at most. The frontend ships every
+# loaded item to /api/summary, so cap above that ceiling; DeepSeek's context
+# comfortably holds it.
 SUMMARY_MAX_ITEMS = 650
 
 
@@ -405,21 +413,38 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
 _SAFE_OPENER = urllib.request.build_opener(_SafeRedirectHandler)
 
 
+def _last_hop(value):
+    """Rightmost non-empty entry of a comma-separated proxy header."""
+    if not value:
+        return ""
+    parts = [p.strip() for p in value.split(",") if p.strip()]
+    return parts[-1] if parts else ""
+
+
 def client_ip_from_headers(headers, fallback=""):
-    """Originating client IP from the first ``X-Forwarded-For`` hop, falling
-    back to the socket peer address."""
-    xff = headers.get("X-Forwarded-For", "") if headers else ""
-    if xff:
-        first = xff.split(",")[0].strip()
-        if first:
-            return first
+    """Originating client IP for rate-limiting.
+
+    Prefers platform-trusted headers (``x-vercel-forwarded-for``,
+    ``x-real-ip``), then falls back to the **rightmost** hop of
+    ``X-Forwarded-For`` — that's the one appended by the last trusted proxy
+    and the one a client cannot control.  The leftmost XFF hop is
+    client-supplied and spoofable, so trusting it would let a single client
+    rotate rate-limiter keys freely."""
+    if headers:
+        for name in ("x-vercel-forwarded-for", "x-real-ip"):
+            hop = _last_hop(headers.get(name, ""))
+            if hop:
+                return hop
+        hop = _last_hop(headers.get("X-Forwarded-For", ""))
+        if hop:
+            return hop
     return fallback
 
 
 def debug_enabled():
     """/api/debug is local-only by default; opt in on Vercel production via
     ``ENABLE_DEBUG=1``."""
-    if os.environ.get("ENABLE_DEBUG"):
+    if os.environ.get("ENABLE_DEBUG") == "1":
         return True
     return os.environ.get("VERCEL_ENV") not in ("production",)
 
@@ -494,9 +519,8 @@ _deepseek_client = openai.OpenAI(
 
 def _call_ai_api_stream(prompt):
     """Call the AI API with streaming. Yields text chunks for real-time parsing."""
-    if DEEPSEEK_KEY:
-        client = openai.OpenAI(api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_BASE_URL)
-        stream = client.chat.completions.create(
+    if _deepseek_client:
+        stream = _deepseek_client.chat.completions.create(
             model=AI_MODEL,
             messages=[
                 {"role": "system", "content": "你是一个专业新闻翻译助手，翻译简洁准确。"},
@@ -567,27 +591,6 @@ def _call_ai_api_stream(prompt):
             detail = exc.read().decode("utf-8", "replace")
             detail = " ".join(detail.split())[:500]
             raise RuntimeError(f"翻译请求失败 HTTP {exc.code}: {detail}") from exc
-        return
-
-    if _deepseek_client:
-        stream = _deepseek_client.chat.completions.create(
-            model=AI_MODEL,
-            messages=[
-                {"role": "system", "content": "你是一个专业新闻翻译助手，翻译简洁准确。"},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=4096,
-            temperature=0.1,
-            stream=True,
-        )
-        for chunk in stream:
-            content = None
-            if chunk.choices:
-                delta = getattr(chunk.choices[0], "delta", None)
-                if delta is not None:
-                    content = getattr(delta, "content", "")
-            if content:
-                yield content
         return
 
     raise RuntimeError("翻译 API 未配置：请设置 DEEPSEEK_API_KEY 或 Claude DeepSeek 配置")
@@ -821,10 +824,7 @@ def fetch_preview_url(url):
     request = urllib.request.Request(url, headers=headers)
     with _SAFE_OPENER.open(request, timeout=12) as response:
         raw = response.read()
-        content_type = response.headers.get("Content-Type", "")
-        charset = "utf-8"
-        if "charset=" in content_type:
-            charset = content_type.split("charset=")[-1].split(";")[0].strip()
+        charset = response.headers.get_content_charset() or "utf-8"
         return raw.decode(charset, errors="replace")
 
 
@@ -842,10 +842,7 @@ def fetch_preview_image(url):
     request = urllib.request.Request(url, headers=headers)
     with _SAFE_OPENER.open(request, timeout=10) as response:
         raw = response.read()
-        content_type = response.headers.get("Content-Type", "")
-        charset = "utf-8"
-        if "charset=" in content_type:
-            charset = content_type.split("charset=")[-1].split(";")[0].strip()
+        charset = response.headers.get_content_charset() or "utf-8"
         image = extract_og_image(raw.decode(charset, errors="replace"))
         return upscale_image_url(image)
 
@@ -1235,6 +1232,22 @@ def zhihu_item_url(api_url):
     return api_url or ""
 
 
+def zhihu_score(detail_text):
+    """Parse a Zhihu ``detail_text`` like "5234 万热度" or "12345 热度"
+    into an int heat value, preserving the 万 multiplier so the UI can
+    format consistently. Returns None when no number is found."""
+    if not detail_text:
+        return None
+    text = str(detail_text)
+    m = re.search(r"([\d,]+)\s*(万)?", text)
+    if not m:
+        return None
+    num = int(m.group(1).replace(",", "")) if m.group(1) else 0
+    if m.group(2):
+        num *= 10000
+    return num or None
+
+
 def fetch_zhihu(source_key):
     meta = SOURCES[source_key]
     raw = fetch_url("https://api.zhihu.com/topstory/hot-list?limit=50", "application/json")
@@ -1262,7 +1275,7 @@ def fetch_zhihu(source_key):
             image=thumb,
             published_at="",
             item_id=str(target.get("id", "")),
-            score=int(re.sub(r"[^\d]", "", entry.get("detail_text", "0")) or 0) or None,
+            score=zhihu_score(entry.get("detail_text", "")),
         ))
 
     target = meta.get("story_limit", 20)
@@ -1535,165 +1548,13 @@ def serve_public_file(filename):
 app = create_flask_app() if Flask is not None else None
 
 
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/api/feed":
-            query = urllib.parse.parse_qs(parsed.query)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache, no-transform")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("X-Accel-Buffering", "no")
-            self.end_headers()
-            for line in stream_feed(query):
-                self.wfile.write(line.encode("utf-8") + b"\n")
-                self.wfile.flush()
-            return
-
-        if parsed.path == "/api/preview":
-            self.handle_preview(parsed)
-            return
-
-        if parsed.path == "/api/preview-image":
-            self.handle_preview_image(parsed)
-            return
-
-        self.serve_static(parsed.path)
-
-    def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/api/summary":
-            self.handle_summary()
-            return
-        self.send_error(404)
-
-    def handle_preview(self, parsed):
-        query = urllib.parse.parse_qs(parsed.query)
-        url = query.get("url", [""])[0]
-        payload, status = preview_payload(url)
-        if status == 200:
-            self.send_json_ok(payload)
-        else:
-            self.send_json_error(payload.get("error", "error"), status)
-
-    def handle_preview_image(self, parsed):
-        query = urllib.parse.parse_qs(parsed.query)
-        url = query.get("url", [""])[0]
-        payload, status = preview_image_payload(url)
-        if status == 200:
-            self.send_json_ok(payload)
-        else:
-            self.send_json_error(payload.get("error", "error"), status)
-
-    def send_json_ok(self, data):
-        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def send_json_error(self, message, code):
-        body = json.dumps({"error": message}, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def handle_summary(self):
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            length = 0
-        if length > 2_000_000:
-            self.send_error(413)
-            return
-
-        ip = client_ip_from_headers(
-            self.headers, self.client_address[0] if self.client_address else ""
-        )
-        if not SUMMARY_LIMITER.allow(ip):
-            self.send_json_error("请求过于频繁，请稍后再试", 429)
-            return
-
-        try:
-            raw = self.rfile.read(length) if length else b"{}"
-            payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            self.send_error(400, "Invalid JSON")
-            return
-
-        items = payload.get("items", [])
-        if not isinstance(items, list):
-            self.send_error(400, "Invalid items")
-            return
-        if len(items) > SUMMARY_MAX_ITEMS:
-            self.send_json_error("items 过多", 400)
-            return
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache, no-transform")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("X-Accel-Buffering", "no")
-        self.end_headers()
-
-        for event in summary_events([item for item in items if isinstance(item, dict)]):
-            line = json.dumps(event, ensure_ascii=False).encode("utf-8") + b"\n"
-            self.wfile.write(line)
-            self.wfile.flush()
-
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
-
-    def do_HEAD(self):
-        parsed = urllib.parse.urlparse(self.path)
-        if parsed.path == "/api/feed":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            return
-        self.serve_static(parsed.path, head_only=True)
-
-    def serve_static(self, request_path, head_only=False):
-        safe_path = urllib.parse.unquote(request_path).lstrip("/") or "index.html"
-        target = (PUBLIC_DIR / safe_path).resolve()
-        if PUBLIC_DIR not in target.parents and target != PUBLIC_DIR:
-            self.send_error(404)
-            return
-        if target.is_dir():
-            target = target / "index.html"
-        if not target.exists():
-            self.send_error(404)
-            return
-
-        content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-        body = target.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        if not head_only:
-            self.wfile.write(body)
-
-    def log_message(self, fmt, *args):
-        print("%s - %s" % (self.address_string(), fmt % args))
-
-
 if __name__ == "__main__":
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    if app is None:
+        raise RuntimeError(
+            "Flask is required to run the dev server: pip install -r requirements.txt"
+        )
+    from werkzeug.serving import make_server
+    server = make_server(HOST, PORT, app, threaded=True)
     print(f"News Focus running at http://{HOST}:{PORT}")
     try:
         server.serve_forever()
