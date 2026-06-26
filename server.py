@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import html
 import ipaddress
 import json
@@ -517,6 +518,108 @@ _deepseek_client = openai.OpenAI(
 ) if DEEPSEEK_KEY and openai else None
 
 
+# =========================================================================
+# DeepLX translation (titles + summaries for non-Chinese sources)
+# =========================================================================
+
+DEEPLX_TOKEN = os.environ.get("DEEPLX_TOKEN", "")
+DEEPLX_BASE_URL = os.environ.get(
+    "DEEPLX_BASE_URL", "https://api.deeplx.org"
+).rstrip("/")
+TRANSLATE_CACHE_TTL = 7 * 24 * 3600  # translations are stable; cache for a week
+TRANSLATE_CACHE = TTLLRU(TRANSLATE_CACHE_TTL, 5000)
+
+# Sources whose content is already Chinese — skip translation entirely.
+NON_TRANSLATABLE_SOURCES = {"zhihu", "google_zh", "linux_do", "linux_do_top"}
+
+# Sources whose ``summary`` field carries meaningful prose worth translating.
+# HN (author name), Reuters (no summary), Google (publisher name) are excluded.
+SUMMARY_TRANSLATABLE_SOURCES = {
+    "economist", "bloomberg", "guardian", "bbc", "verge",
+    "atlantic", "newyorker", "mit_tech", "washingtonpost",
+}
+
+
+def should_translate_source(source_key):
+    return DEEPLX_TOKEN and source_key not in NON_TRANSLATABLE_SOURCES
+
+
+def should_translate_summary(source_key):
+    return source_key in SUMMARY_TRANSLATABLE_SOURCES
+
+
+def deeplx_translate(text_value, target_lang="ZH"):
+    """Translate *text_value* via DeepLX. Returns the original on any failure
+    (missing token, network error, upstream non-200) so the feed degrades
+    gracefully to English. Results are cached by text hash for a week."""
+    if not text_value or not DEEPLX_TOKEN:
+        return text_value
+    cache_key = hashlib.sha256(
+        f"{target_lang}\x00{text_value}".encode("utf-8")
+    ).hexdigest()
+    now = time.time()
+    cached = TRANSLATE_CACHE.get(cache_key, now)
+    if cached is not None:
+        return cached
+    try:
+        payload = json.dumps(
+            {"text": text_value, "target_lang": target_lang},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            f"{DEEPLX_BASE_URL}/{DEEPLX_TOKEN}/translate",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                # Cloudflare blocks the default Python-urllib UA (403 code 1010).
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/131.0.0.0 Safari/537.36",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+        if data.get("code") == 200:
+            result = (data.get("data") or "").strip()
+            if result:
+                TRANSLATE_CACHE.set(cache_key, result, now)
+                return result
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+            json.JSONDecodeError):
+        pass
+    return text_value
+
+
+def translate_items(items, source_key):
+    """Translate titles (and summaries where meaningful) for non-Chinese
+    sources. Originals are preserved as ``titleOriginal`` / ``summaryOriginal``
+    for client-side hover display. Translates in place; returns *items*."""
+    if not should_translate_source(source_key) or not items:
+        return items
+    do_summary = should_translate_summary(source_key)
+    jobs = {}
+    with ThreadPoolExecutor(max_workers=min(8, len(items))) as pool:
+        for item in items:
+            title = item.get("title") or ""
+            if title:
+                jobs[pool.submit(deeplx_translate, title)] = ("title", item)
+            if do_summary:
+                summary = item.get("summary") or ""
+                if summary:
+                    jobs[pool.submit(deeplx_translate, summary)] = ("summary", item)
+        for future in as_completed(jobs):
+            field, item = jobs[future]
+            try:
+                result = future.result()
+            except Exception:
+                continue
+            if result and result != item.get(field):
+                item[f"{field}Original"] = item[field]
+                item[field] = result
+    return items
+
+
 def _call_ai_api_stream(prompt):
     """Call the AI API with streaming. Yields text chunks for real-time parsing."""
     if _deepseek_client:
@@ -915,6 +1018,7 @@ def source_payload(source_key, items, latest_build_time=""):
     limit = meta.get("story_limit", 20)
     if limit and len(items) > limit:
         items = items[:limit]
+    translate_items(items, source_key)
     return {
         "key": source_key,
         "label": meta["label"],
@@ -1451,6 +1555,8 @@ def create_flask_app():
             "model": AI_MODEL,
             "has_openai": openai is not None,
             "_deepseek_client": bool(_deepseek_client),
+            "has_deeplx_token": bool(DEEPLX_TOKEN),
+            "deeplx_base_url": DEEPLX_BASE_URL,
         })
 
     @flask_app.after_request

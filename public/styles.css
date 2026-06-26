@@ -744,7 +744,6 @@ h1 {
 
   &:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); }
   &:disabled { opacity: 0.4; cursor: not-allowed; }
-  &.copied { color: #34a853; border-color: #34a853; }
 }
 
 .summary-close {

@@ -15,7 +15,6 @@ import {
   setFeedStateHandler,
   summaryState,
   startSummaryFetch,
-  regenerateSummary,
   setSummaryRefreshHandler,
 } from './api.js';
 
@@ -46,13 +45,17 @@ export function setTheme(theme) {
   state.theme = theme === "dark" ? "dark" : "light";
   localStorage.setItem("themeMode", state.theme);
   document.body.classList.toggle("theme-dark", state.theme === "dark");
-  const span = els.theme.querySelector("span");
-  if (span) {
-    span.textContent = state.theme === "dark" ? "☀" : "☾";
-  }
+  syncThemeButton(els.theme);
+}
+
+/** Update a theme toggle button's icon/label to reflect the current theme. */
+function syncThemeButton(btn) {
+  if (!btn) return;
+  const span = btn.querySelector("span");
+  if (span) span.textContent = state.theme === "dark" ? "☀" : "☾";
   const label = state.theme === "dark" ? "切换日间模式" : "切换夜间模式";
-  els.theme.setAttribute("aria-label", label);
-  els.theme.title = label;
+  btn.setAttribute("aria-label", label);
+  btn.title = label;
 }
 
 // =========================================================================
@@ -121,7 +124,12 @@ function renderArticle(item) {
   const title = node.querySelector(".title");
   title.href = mainUrl;
   title.textContent = toText(item.title || item.summary || "Untitled");
-  if (isLiveTitle(item.title || "")) {
+  // Show original (pre-translation) text on hover for transparency
+  if (item.titleOriginal && item.titleOriginal !== item.title) {
+    title.title = item.titleOriginal;
+  }
+  // Live-badge check uses the original English title ("Live"/"LIVE")
+  if (isLiveTitle(item.titleOriginal || item.title || "")) {
     const badge = document.createElement("span");
     badge.className = "live-badge";
     badge.textContent = "LIVE";
@@ -134,6 +142,9 @@ function renderArticle(item) {
   const summaryText = item.summary || "";
   summary.textContent = toText(summaryText);
   summary.hidden = !summaryText;
+  if (item.summaryOriginal && item.summaryOriginal !== item.summary) {
+    summary.title = item.summaryOriginal;
+  }
 
   // --- Links row ---
   const links = node.querySelector(".links");
@@ -617,10 +628,8 @@ function refreshModalBody() {
     }
   }
 
-  const copy  = summaryState.modal.querySelector("#summaryCopy");
-  const regen = summaryState.modal.querySelector("#summaryRegen");
-  if (copy)  copy.disabled  = summaryState.loading || !summaryState.text;
-  if (regen) regen.disabled = summaryState.loading;
+  // Sync the in-modal theme toggle icon with the current theme.
+  syncThemeButton(summaryState.modal.querySelector(".summary-theme"));
 }
 
 function buildSummaryModal() {
@@ -646,8 +655,7 @@ function buildSummaryModal() {
       <div class="summary-card-header">
         <span class="summary-title" id="summary-title">${statusIcon} ${headerText}</span>
         <div class="summary-actions">
-          <button class="summary-action" id="summaryCopy" type="button" aria-label="复制总结" title="复制">⧉</button>
-          <button class="summary-action" id="summaryRegen" type="button" aria-label="重新生成" title="重新生成">↻</button>
+          <button class="summary-action summary-theme" type="button" aria-label="切换夜间模式" title="切换夜间模式"><span>☾</span></button>
           <button class="summary-close" type="button" aria-label="关闭">✕</button>
         </div>
       </div>
@@ -655,25 +663,10 @@ function buildSummaryModal() {
     </div>`;
 
   modal.querySelector(".summary-close").addEventListener("click", dismissSummaryModal);
+  modal.querySelector(".summary-theme").addEventListener("click", () =>
+    setTheme(state.theme === "dark" ? "light" : "dark"));
   modal.addEventListener("click", (e) => {
     if (e.target === modal) dismissSummaryModal();
-  });
-
-  // Copy / regenerate actions
-  const copyBtn = modal.querySelector("#summaryCopy");
-  copyBtn.addEventListener("click", async () => {
-    const text = summaryState.text || "";
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      copyBtn.classList.add("copied");
-      copyBtn.title = "已复制";
-      setTimeout(() => { copyBtn.classList.remove("copied"); copyBtn.title = "复制"; }, 1200);
-    } catch { /* clipboard unavailable */ }
-  });
-  const regenBtn = modal.querySelector("#summaryRegen");
-  regenBtn.addEventListener("click", () => {
-    if (!summaryState.loading) regenerateSummary();
   });
 
   // TOC chip clicks (delegated) -> scroll to section

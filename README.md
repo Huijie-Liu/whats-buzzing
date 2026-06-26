@@ -32,7 +32,12 @@ python -m unittest discover -s tests
 DEEPSEEK_API_KEY=your_api_key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 DEEPSEEK_MODEL=deepseek-chat
+DEEPLX_TOKEN=your_deeplx_token
 ```
+
+- **DeepSeek** 驱动 `/api/summary` 的 AI 要闻总结。
+- **DeepLX** 翻译非中文新闻的标题和摘要为中文（token 在
+  [connect.linux.do](https://connect.linux.do) 获取）。未设置时 feed 保持原文。
 
 `public/` 中的文件会作为静态资源发布，后端接口由 Flask app 提供：
 

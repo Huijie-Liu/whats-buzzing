@@ -25,6 +25,10 @@ from server import (
     TTLLRU,
     client_ip_from_headers,
     debug_enabled,
+    should_translate_source,
+    should_translate_summary,
+    deeplx_translate,
+    translate_items,
 )
 
 
@@ -393,6 +397,115 @@ class DebugEnabledTests(unittest.TestCase):
         os.environ["VERCEL_ENV"] = "production"
         os.environ["ENABLE_DEBUG"] = "1"
         self.assertTrue(debug_enabled())
+
+
+class TranslationSourceTests(unittest.TestCase):
+    def test_chinese_sources_not_translatable(self):
+        for key in ("zhihu", "google_zh", "linux_do", "linux_do_top"):
+            self.assertFalse(should_translate_source(key), f"{key} should not translate")
+
+    def test_english_sources_translatable(self):
+        for key in ("hn", "economist", "reuters", "bloomberg", "guardian", "bbc"):
+            self.assertTrue(should_translate_source(key), f"{key} should translate")
+
+    def test_summary_translatable_only_for_prose_sources(self):
+        # Sources with meaningful prose summaries
+        for key in ("economist", "bloomberg", "guardian", "bbc", "verge"):
+            self.assertTrue(should_translate_summary(key), f"{key} summary should translate")
+        # Sources with no/useless summaries
+        for key in ("hn", "reuters", "google", "google_zh", "zhihu"):
+            self.assertFalse(should_translate_summary(key), f"{key} summary should NOT translate")
+
+
+class DeepLXTranslateTests(unittest.TestCase):
+    def setUp(self):
+        self._saved_token = os.environ.get("DEEPLX_TOKEN")
+        os.environ["DEEPLX_TOKEN"] = "test-token"
+
+    def tearDown(self):
+        if self._saved_token is None:
+            os.environ.pop("DEEPLX_TOKEN", None)
+        else:
+            os.environ["DEEPLX_TOKEN"] = self._saved_token
+
+    def test_empty_text_passthrough(self):
+        self.assertEqual(deeplx_translate(""), "")
+        self.assertEqual(deeplx_translate(None), None)
+
+    def test_no_token_returns_original(self):
+        os.environ.pop("DEEPLX_TOKEN", None)
+        # Re-import the module-level flag isn't trivial; instead verify the
+        # guard directly via the function's behaviour by checking a known
+        # string is returned unchanged when the endpoint is unreachable.
+        # (Without token the function short-circuits before any network call.)
+        import server
+        old = server.DEEPLX_TOKEN
+        server.DEEPLX_TOKEN = ""
+        try:
+            self.assertEqual(deeplx_translate("Hello"), "Hello")
+        finally:
+            server.DEEPLX_TOKEN = old
+
+
+class TranslateItemsTests(unittest.TestCase):
+    def test_translates_title_and_preserves_original(self):
+        import server
+        old_token = server.DEEPLX_TOKEN
+        old_translate = server.deeplx_translate
+        server.DEEPLX_TOKEN = "test-token"
+        server.deeplx_translate = lambda t, target_lang="ZH": f"译:{t}"
+        try:
+            meta = SOURCES["economist"]
+            items = [
+                make_item("economist", meta, title="Hello World",
+                          url="https://x.com/a", summary="A short summary"),
+                make_item("economist", meta, title="Second Story",
+                          url="https://x.com/b", summary=""),
+            ]
+            translate_items(items, "economist")
+            self.assertEqual(items[0]["title"], "译:Hello World")
+            self.assertEqual(items[0]["titleOriginal"], "Hello World")
+            self.assertEqual(items[0]["summary"], "译:A short summary")
+            self.assertEqual(items[0]["summaryOriginal"], "A short summary")
+            # No summary -> no summaryOriginal
+            self.assertNotIn("summaryOriginal", items[1])
+        finally:
+            server.DEEPLX_TOKEN = old_token
+            server.deeplx_translate = old_translate
+
+    def test_skips_chinese_sources(self):
+        import server
+        server.DEEPLX_TOKEN = "test-token"
+        old = server.deeplx_translate
+        calls = []
+        server.deeplx_translate = lambda t, target_lang="ZH": calls.append(t) or f"译:{t}"
+        try:
+            meta = SOURCES["zhihu"]
+            items = [make_item("zhihu", meta, title="知乎热榜标题", url="https://zhihu.com/q/1")]
+            translate_items(items, "zhihu")
+            self.assertEqual(items[0]["title"], "知乎热榜标题")  # unchanged
+            self.assertEqual(calls, [])  # no translation calls
+        finally:
+            server.deeplx_translate = old
+
+    def test_skips_summary_for_non_prose_sources(self):
+        import server
+        server.DEEPLX_TOKEN = "test-token"
+        old = server.deeplx_translate
+        translated = []
+        server.deeplx_translate = lambda t, target_lang="ZH": translated.append(t) or f"译:{t}"
+        try:
+            meta = SOURCES["hn"]
+            items = [make_item("hn", meta, title="Show HN: Foo",
+                               url="https://x.com/a", summary="tptacek")]
+            translate_items(items, "hn")
+            # Title translated, summary (author name) NOT translated
+            self.assertEqual(items[0]["title"], "译:Show HN: Foo")
+            self.assertEqual(items[0]["titleOriginal"], "Show HN: Foo")
+            self.assertNotIn("summaryOriginal", items[0])
+            self.assertEqual(len(translated), 1)  # only the title
+        finally:
+            server.deeplx_translate = old
 
 
 if __name__ == "__main__":
