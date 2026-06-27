@@ -45,6 +45,19 @@ export async function loadFeed() {
             state.sourceCounts.set(event.key, event.count);
             state.loading = false;
             loadFeed._onStateChange?.("render");
+          } else if (event.type === "translate") {
+            const item = state.items.find((i) => i.id === event.itemId);
+            if (item) {
+              const field = event.field;
+              if (!item[`${field}Original`]) {
+                item[`${field}Original`] = item[field];
+              }
+              item[field] = event.translated;
+              loadFeed._onStateChange?.("translate", {
+                itemId: event.itemId,
+                field,
+              });
+            }
           } else if (event.type === "done") {
             loadFeed._onStateChange?.("errors", event.errors || []);
           }

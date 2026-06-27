@@ -13,6 +13,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -591,20 +592,27 @@ def deeplx_translate(text_value, target_lang="ZH"):
     return text_value
 
 
-def translate_items(items, source_key):
+def translate_items(items, source_key, event_q=None):
     """Translate titles (and summaries where meaningful) for non-Chinese
     sources. Originals are preserved as ``titleOriginal`` / ``summaryOriginal``
-    for client-side hover display. Translates in place; returns *items*."""
+    for client-side hover display. Translates in place; returns *items*.
+
+    If *event_q* is provided, a ``("translate", source_key, item_id, field,
+    result)`` tuple is put on the queue for each translated field, enabling
+    streaming updates to the client.  Items that already carry an
+    ``*Original`` key (e.g. from a warmed cache) are skipped so cached
+    Chinese text is never re-translated."""
     if not should_translate_source(source_key) or not items:
         return items
     do_summary = should_translate_summary(source_key)
     jobs = {}
     with ThreadPoolExecutor(max_workers=min(8, len(items))) as pool:
         for item in items:
-            title = item.get("title") or ""
-            if title:
-                jobs[pool.submit(deeplx_translate, title)] = ("title", item)
-            if do_summary:
+            if not item.get("titleOriginal"):
+                title = item.get("title") or ""
+                if title:
+                    jobs[pool.submit(deeplx_translate, title)] = ("title", item)
+            if do_summary and not item.get("summaryOriginal"):
                 summary = item.get("summary") or ""
                 if summary:
                     jobs[pool.submit(deeplx_translate, summary)] = ("summary", item)
@@ -617,6 +625,8 @@ def translate_items(items, source_key):
             if result and result != item.get(field):
                 item[f"{field}Original"] = item[field]
                 item[field] = result
+                if event_q is not None:
+                    event_q.put(("translate", source_key, item["id"], field, result))
     return items
 
 
@@ -1018,7 +1028,6 @@ def source_payload(source_key, items, latest_build_time=""):
     limit = meta.get("story_limit", 20)
     if limit and len(items) > limit:
         items = items[:limit]
-    translate_items(items, source_key)
     return {
         "key": source_key,
         "label": meta["label"],
@@ -1419,15 +1428,48 @@ def stream_feed(query):
     keys = list(SOURCES.keys()) if requested == "all" else [requested]
     keys = [key for key in keys if key in SOURCES]
 
-    errors = []
-    source_order = {key: index for index, key in enumerate(SOURCES.keys())}
+    if not keys:
+        yield json.dumps({"type": "done", "updatedAt": iso_now(), "errors": []}, ensure_ascii=False)
+        return
 
-    with ThreadPoolExecutor(max_workers=min(5, len(keys) or 1)) as pool:
-        jobs = {pool.submit(fetch_source, key): key for key in keys}
-        for job in as_completed(jobs):
-            key = jobs[job]
-            try:
-                payload = job.result()
+    errors = []
+    event_q: Queue = Queue()
+    remaining = [len(keys)]
+
+    def process_source(key):
+        """Fetch a source, emit its items immediately, then translate
+        in the background and emit translation events as they complete."""
+        try:
+            payload = fetch_source(key)
+            event_q.put(("source", payload))
+            translate_items(payload["items"], key, event_q)
+        except (
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            TimeoutError,
+            ET.ParseError,
+            json.JSONDecodeError,
+            RuntimeError,
+        ) as exc:
+            event_q.put(("error", key, str(exc)))
+        except Exception as exc:
+            event_q.put(("error", key, f"unexpected: {exc}"))
+        finally:
+            remaining[0] -= 1
+            if remaining[0] == 0:
+                event_q.put(None)
+
+    with ThreadPoolExecutor(max_workers=min(5, len(keys))) as pool:
+        for key in keys:
+            pool.submit(process_source, key)
+
+        while True:
+            event = event_q.get()
+            if event is None:
+                break
+            kind = event[0]
+            if kind == "source":
+                payload = event[1]
                 yield json.dumps({
                     "type": "source",
                     "key": payload["key"],
@@ -1437,15 +1479,17 @@ def stream_feed(query):
                     "count": len(payload["items"]),
                     "items": payload["items"],
                 }, ensure_ascii=False)
-            except (
-                urllib.error.URLError,
-                urllib.error.HTTPError,
-                TimeoutError,
-                ET.ParseError,
-                json.JSONDecodeError,
-                RuntimeError,
-            ) as exc:
-                errors.append({"source": key, "message": str(exc)})
+            elif kind == "translate":
+                _, source_key, item_id, field, translated = event
+                yield json.dumps({
+                    "type": "translate",
+                    "source": source_key,
+                    "itemId": item_id,
+                    "field": field,
+                    "translated": translated,
+                }, ensure_ascii=False)
+            elif kind == "error":
+                errors.append({"source": event[1], "message": event[2]})
 
     yield json.dumps({
         "type": "done",

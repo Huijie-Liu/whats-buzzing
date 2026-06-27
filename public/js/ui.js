@@ -431,6 +431,57 @@ function addExpandButtons() {
 }
 
 // =========================================================================
+// Progressive translation updates (partial DOM patch, no full re-render)
+// =========================================================================
+
+// Batch translation updates with requestAnimationFrame so a burst of
+// cached translate events doesn't thrash the DOM.
+const pendingTranslations = [];
+let translationRafId = null;
+
+function scheduleTranslationUpdate(itemId, field) {
+  pendingTranslations.push({ itemId, field });
+  if (translationRafId === null) {
+    translationRafId = requestAnimationFrame(flushTranslationUpdates);
+  }
+}
+
+function flushTranslationUpdates() {
+  translationRafId = null;
+  const updates = pendingTranslations.splice(0);
+  for (const { itemId, field } of updates) {
+    updateItemTranslation(itemId, field);
+  }
+}
+
+function updateItemTranslation(itemId, field) {
+  const node = feedCards().find((n) => n.dataset.itemId === itemId);
+  if (!node) return;
+  const item = findItemById(itemId);
+  if (!item) return;
+
+  if (field === "title") {
+    const titleEl = node.querySelector(".title");
+    if (!titleEl) return;
+    const badge = titleEl.querySelector(".live-badge");
+    titleEl.textContent = toText(item.title || "");
+    if (badge) titleEl.appendChild(badge);
+    if (item.titleOriginal && item.titleOriginal !== item.title) {
+      titleEl.title = item.titleOriginal;
+    }
+  } else if (field === "summary") {
+    const summaryEl = node.querySelector(".summary");
+    if (!summaryEl) return;
+    const summaryText = item.summary || "";
+    summaryEl.textContent = toText(summaryText);
+    summaryEl.hidden = !summaryText;
+    if (item.summaryOriginal && item.summaryOriginal !== item.summary) {
+      summaryEl.title = item.summaryOriginal;
+    }
+  }
+}
+
+// =========================================================================
 // Master render
 // =========================================================================
 
@@ -950,6 +1001,7 @@ function setupApiBridge() {
     switch (action) {
       case "loading": renderColumns(); break;
       case "render":  render(); resetFeedScroll(); break;
+      case "translate": scheduleTranslationUpdate(payload.itemId, payload.field); break;
       case "errors":  renderErrors(payload); break;
       case "error":   els.error.hidden = false; els.error.textContent = `无法读取 feed：${payload}`; break;
     }
