@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+import hashlib
 import html
 import ipaddress
 import json
 import os
 import re
 import socket
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -575,6 +577,65 @@ def _parse_translation_json(text):
     return {}
 
 
+TRANSLATION_CACHE_TTL = 24 * 3600  # translations are stable; cache for a day
+TRANSLATION_CACHE = TTLLRU(TRANSLATION_CACHE_TTL, 5000)
+
+TRANSLATION_SYSTEM_PROMPT = "你是一个专业新闻翻译助手，翻译简洁准确。"
+SUMMARY_SYSTEM_PROMPT = "你是一位资深新闻编辑，擅长撰写简洁有力的要闻简报。"
+
+
+def _build_translation_prompt(jobs):
+    """Build the batch translation prompt for a list of (item, field, original)."""
+    numbered = [f"[{i}] {original}" for i, (_, _, original) in enumerate(jobs)]
+    return (
+        "将以下英文新闻标题和摘要翻译为简体中文，保持简洁准确的新闻风格。"
+        "人名、机构名、专有名词保留原文或使用常见中文译名。\n"
+        "输出 JSON 对象，key 为编号字符串，value 为译文。\n"
+        "不要输出任何多余内容，只输出 JSON。\n\n"
+        + "\n".join(numbered)
+        + '\n\n输出格式：{"0":"译文","1":"译文",...}'
+    )
+
+
+def _translate_batch(jobs, max_tokens=8192):
+    """Translate a list of (item, field, original) jobs in a single AI call.
+    Returns a dict ``{str(index): translated_text}`` or ``{}`` on failure."""
+    if not jobs:
+        return {}
+    prompt = _build_translation_prompt(jobs)
+    try:
+        full_text = "".join(
+            _call_ai_api_stream(
+                prompt,
+                system_prompt=TRANSLATION_SYSTEM_PROMPT,
+                max_tokens=max_tokens,
+            )
+        )
+        result = _parse_translation_json(full_text)
+        if isinstance(result, dict) and result:
+            return result
+    except Exception as exc:
+        print(f"[translate] AI call failed ({len(jobs)} items): {exc}",
+              file=sys.stderr)
+    return {}
+
+
+def _apply_translations(jobs, translations, source_key, event_q=None):
+    """Apply a ``{str(index): text}`` dict to *jobs* in place.
+
+    Emits translate events to *event_q* if provided."""
+    for i, (item, field, original) in enumerate(jobs):
+        translated = translations.get(str(i), "")
+        if not isinstance(translated, str):
+            translated = str(translated)
+        translated = translated.strip()
+        if translated and translated != original:
+            item[f"{field}Original"] = item[field]
+            item[field] = translated
+            if event_q is not None:
+                event_q.put(("translate", source_key, item["id"], field, translated))
+
+
 def translate_items(items, source_key, event_q=None):
     """Translate titles (and summaries where meaningful) for non-Chinese
     sources using DeepSeek batch translation. Originals are preserved as
@@ -585,7 +646,11 @@ def translate_items(items, source_key, event_q=None):
     result)`` tuple is put on the queue for each translated field, enabling
     streaming updates to the client.  Items that already carry an
     ``*Original`` key (e.g. from a warmed cache) are skipped so cached
-    Chinese text is never re-translated."""
+    Chinese text is never re-translated.
+
+    A single batch call is attempted first for speed; if the response is
+    truncated or unparseable the batch is split into smaller chunks and
+    retried so a single failure does not lose the whole source."""
     if not should_translate_source(source_key) or not items:
         return items
 
@@ -608,49 +673,52 @@ def translate_items(items, source_key, event_q=None):
     if not jobs:
         return items
 
-    # Build a single batch prompt: numbered inputs -> JSON output.
-    numbered = [f"[{i}] {original}" for i, (_, _, original) in enumerate(jobs)]
-    prompt = (
-        "将以下英文新闻标题和摘要翻译为简体中文，保持简洁准确的新闻风格。"
-        "人名、机构名、专有名词保留原文或使用常见中文译名。\n"
-        "输出 JSON 对象，key 为编号字符串，value 为译文。\n"
-        "不要输出任何多余内容，只输出 JSON。\n\n"
-        + "\n".join(numbered)
-        + '\n\n输出格式：{"0":"译文","1":"译文",...}'
-    )
-
-    try:
-        full_text = "".join(_call_ai_api_stream(prompt))
-        translations = _parse_translation_json(full_text)
-    except Exception:
+    # Cache by the full set of texts being translated so unchanged
+    # headlines reuse the previous translation across cache cycles.
+    cache_key = hashlib.sha256(
+        "\x00".join(original for _, _, original in jobs).encode("utf-8")
+    ).hexdigest()
+    now = time.time()
+    cached = TRANSLATION_CACHE.get(cache_key, now)
+    if cached is not None:
+        _apply_translations(jobs, cached, source_key, event_q)
         return items
 
-    if not isinstance(translations, dict) or not translations:
+    # Single batch call for speed.
+    translations = _translate_batch(jobs, max_tokens=8192)
+
+    # If the batch was too large (truncated JSON), retry in smaller chunks.
+    if not translations and len(jobs) > 10:
+        batch_size = 10
+        translations = {}
+        for start in range(0, len(jobs), batch_size):
+            batch = jobs[start:start + batch_size]
+            batch_result = _translate_batch(batch, max_tokens=8192)
+            for local_i, text in batch_result.items():
+                translations[str(start + int(local_i))] = text
+
+    if not translations:
         return items
 
-    for i, (item, field, original) in enumerate(jobs):
-        translated = translations.get(str(i), "")
-        if not isinstance(translated, str):
-            translated = str(translated)
-        translated = translated.strip()
-        if translated and translated != original:
-            item[f"{field}Original"] = item[field]
-            item[field] = translated
-            if event_q is not None:
-                event_q.put(("translate", source_key, item["id"], field, translated))
+    TRANSLATION_CACHE.set(cache_key, translations, now)
+    _apply_translations(jobs, translations, source_key, event_q)
     return items
 
 
-def _call_ai_api_stream(prompt):
-    """Call the AI API with streaming. Yields text chunks for real-time parsing."""
+def _call_ai_api_stream(prompt, *, system_prompt=TRANSLATION_SYSTEM_PROMPT, max_tokens=4096):
+    """Call the AI API with streaming. Yields text chunks for real-time parsing.
+
+    *system_prompt* and *max_tokens* can be overridden by the caller; the
+    defaults are tuned for translation, so summary callers should pass their
+    own values."""
     if _deepseek_client:
         stream = _deepseek_client.chat.completions.create(
             model=AI_MODEL,
             messages=[
-                {"role": "system", "content": "你是一个专业新闻翻译助手，翻译简洁准确。"},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=4096,
+            max_tokens=max_tokens,
             temperature=0.1,
             stream=True,
         )
@@ -677,9 +745,9 @@ def _call_ai_api_stream(prompt):
         }
         payload = {
             "model": AI_MODEL,
-            "system": "你是一个专业新闻翻译助手，翻译简洁准确。",
+            "system": system_prompt,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 4096,
+            "max_tokens": max_tokens,
             "temperature": 0.1,
             "stream": True,
         }
@@ -815,7 +883,11 @@ def summary_events(items):
 
     try:
         buffer = ""
-        for chunk in _call_ai_api_stream(prompt):
+        for chunk in _call_ai_api_stream(
+            prompt,
+            system_prompt=SUMMARY_SYSTEM_PROMPT,
+            max_tokens=4096,
+        ):
             buffer += chunk
             yield {"type": "chunk", "text": chunk}
 

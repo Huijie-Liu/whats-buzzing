@@ -457,16 +457,19 @@ class TranslateItemsTests(unittest.TestCase):
         self._old_available = server.ai_translation_available
         server.ai_translation_available = lambda: True
         self._old_call = server._call_ai_api_stream
+        # Clear translation cache so prior tests don't interfere.
+        server.TRANSLATION_CACHE._store.clear()
 
     def tearDown(self):
         import server
         server.ai_translation_available = self._old_available
         server._call_ai_api_stream = self._old_call
+        server.TRANSLATION_CACHE._store.clear()
 
     def _mock_translations(self, mapping):
         """Make _call_ai_api_stream return a JSON string of *mapping*."""
         import server
-        server._call_ai_api_stream = lambda prompt: iter([json.dumps(mapping)])
+        server._call_ai_api_stream = lambda prompt, **kw: iter([json.dumps(mapping)])
 
     def test_translates_title_and_preserves_original(self):
         self._mock_translations({"0": "你好世界", "1": "简短摘要"})
@@ -488,7 +491,7 @@ class TranslateItemsTests(unittest.TestCase):
     def test_skips_chinese_sources(self):
         import server
         calls = []
-        server._call_ai_api_stream = lambda prompt: calls.append(prompt) or iter(["{}"])
+        server._call_ai_api_stream = lambda prompt, **kw: calls.append(prompt) or iter(["{}"])
         meta = SOURCES["zhihu"]
         items = [make_item("zhihu", meta, title="知乎热榜标题", url="https://zhihu.com/q/1")]
         translate_items(items, "zhihu")
@@ -510,7 +513,7 @@ class TranslateItemsTests(unittest.TestCase):
         """Items with titleOriginal are not re-sent to the AI."""
         import server
         calls = []
-        server._call_ai_api_stream = lambda prompt: calls.append(prompt) or iter(["{}"])
+        server._call_ai_api_stream = lambda prompt, **kw: calls.append(prompt) or iter(["{}"])
         meta = SOURCES["economist"]
         item = make_item("economist", meta, title="Hello", url="https://x.com/a")
         item["titleOriginal"] = "Hello"
@@ -520,11 +523,60 @@ class TranslateItemsTests(unittest.TestCase):
 
     def test_ai_failure_leaves_items_unchanged(self):
         import server
-        server._call_ai_api_stream = lambda prompt: (_ for _ in ()).throw(RuntimeError("boom"))
+        server._call_ai_api_stream = lambda prompt, **kw: (_ for _ in ()).throw(RuntimeError("boom"))
         meta = SOURCES["economist"]
         items = [make_item("economist", meta, title="Hello", url="https://x.com/a")]
         translate_items(items, "economist")
         self.assertEqual(items[0]["title"], "Hello")  # unchanged
+
+    def test_cache_hit_skips_ai_call(self):
+        """Second call with the same texts should not hit the AI again."""
+        import server
+        calls = []
+        self._mock_translations({"0": "你好"})
+        meta = SOURCES["economist"]
+        items = [make_item("economist", meta, title="Hello", url="https://x.com/a")]
+
+        def counting_call(prompt, **kw):
+            calls.append(prompt)
+            return iter([json.dumps({"0": "你好"})])
+
+        server._call_ai_api_stream = counting_call
+        translate_items(items, "economist")
+        self.assertEqual(len(calls), 1)
+
+        # Second call with same text -> should hit cache, no new AI call.
+        items2 = [make_item("economist", meta, title="Hello", url="https://x.com/b")]
+        translate_items(items2, "economist")
+        self.assertEqual(len(calls), 1)  # still 1
+        self.assertEqual(items2[0]["title"], "你好")
+
+    def test_batch_fallback_on_truncated_json(self):
+        """When the first batch returns unparseable JSON, retry in smaller batches."""
+        import server
+        call_count = [0]
+
+        def mock_call(prompt, **kw):
+            call_count[0] += 1
+            # First call (full batch) returns truncated JSON.
+            # Subsequent calls (small batches) succeed.
+            if call_count[0] == 1:
+                return iter(['{"0":"第一条译文","1":"第二'])  # truncated
+            return iter(['{"0":"第一条译文"}'])  # small batch succeeds
+
+        server._call_ai_api_stream = mock_call
+        meta = SOURCES["economist"]
+        # Need >10 jobs to trigger the fallback path.
+        items = [
+            make_item("economist", meta, title=f"Title {i}", url=f"https://x.com/{i}")
+            for i in range(15)
+        ]
+        translate_items(items, "economist")
+        # At least the first item should be translated via the fallback.
+        self.assertEqual(items[0]["title"], "第一条译文")
+        self.assertEqual(items[0]["titleOriginal"], "Title 0")
+        # Multiple calls: 1 initial + at least 1 fallback batch.
+        self.assertGreater(call_count[0], 1)
 
 
 if __name__ == "__main__":
