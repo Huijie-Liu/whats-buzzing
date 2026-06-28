@@ -396,6 +396,34 @@ function renderErrors(errors = []) {
 }
 
 // =========================================================================
+// Incremental column update (avoids full re-render flicker during streaming)
+// =========================================================================
+
+/** Update a single column in place without rebuilding the entire feed.
+ *  Called when a source event arrives so only that column's cards are
+ *  (re)rendered — the rest of the DOM (and scroll positions) are left
+ *  untouched. */
+function updateColumn(sourceKey) {
+  const col = groupColumns().find((c) => c.source === sourceKey);
+  if (!col) return;
+
+  const columnEl = els.feed.querySelector(`.column[data-source="${sourceKey}"]`);
+  if (!columnEl) {
+    render();
+    return;
+  }
+
+  const countEl = columnEl.querySelector(".column-count");
+  if (countEl) countEl.textContent = sourceCount(col.source);
+
+  const list = columnEl.querySelector(".column-list");
+  if (list) list.replaceChildren(renderColumnBody(col));
+
+  addExpandButtons();
+  restoreSelection();
+}
+
+// =========================================================================
 // Expand buttons (placed after layout so we can measure clamp overflow)
 // =========================================================================
 
@@ -999,8 +1027,17 @@ function setupApiBridge() {
   // Feed state changes
   setFeedStateHandler((action, payload) => {
     switch (action) {
-      case "loading": renderColumns(); break;
-      case "render":  render(); resetFeedScroll(); break;
+      case "loading":
+        renderColumns();
+        resetFeedScroll();
+        break;
+      case "render":
+        if (payload?.sourceKey) {
+          updateColumn(payload.sourceKey);
+        } else {
+          render();
+        }
+        break;
       case "translate": scheduleTranslationUpdate(payload.itemId, payload.field); break;
       case "errors":  renderErrors(payload); break;
       case "error":   els.error.hidden = false; els.error.textContent = `无法读取 feed：${payload}`; break;

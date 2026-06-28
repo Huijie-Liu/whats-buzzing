@@ -44,7 +44,7 @@ export async function loadFeed() {
             state.items.push(...prepared);
             state.sourceCounts.set(event.key, event.count);
             state.loading = false;
-            loadFeed._onStateChange?.("render");
+            loadFeed._onStateChange?.("render", { sourceKey: event.key });
           } else if (event.type === "translate") {
             const item = state.items.find((i) => i.id === event.itemId);
             if (item) {
@@ -70,7 +70,6 @@ export async function loadFeed() {
     loadFeed._onStateChange?.("error", error.message);
   } finally {
     state.loading = false;
-    loadFeed._onStateChange?.("render");
   }
 }
 
