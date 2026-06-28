@@ -342,6 +342,12 @@ SUMMARY_LIMITER = RateLimiter(max_calls=5, period=60)
 # comfortably holds it.
 SUMMARY_MAX_ITEMS = 650
 
+# On-demand translation: the client requests translation for visible items
+# only.  Rate-limit per IP to deter abuse; allow enough headroom for
+# scrolling through several columns of cards.
+TRANSLATE_LIMITER = RateLimiter(max_calls=30, period=60)
+TRANSLATE_MAX_ITEMS = 100
+
 
 # Networks the preview endpoints must never reach: RFC1918, loopback,
 # link-local (incl. cloud metadata), CGNAT, and the IPv6 equivalents.
@@ -703,6 +709,71 @@ def translate_items(items, source_key, event_q=None):
     TRANSLATION_CACHE.set(cache_key, translations, now)
     _apply_translations(jobs, translations, source_key, event_q)
     return items
+
+
+def translate_events(items_data, source_key):
+    """Stream translation events for a batch of items requested by the client.
+
+    Unlike ``translate_items`` (which mutates item dicts in place), this
+    generator takes plain ``{id, title, summary}`` dicts from the request
+    body and yields NDJSON ``translate`` / ``done`` events suitable for a
+    streaming HTTP response.  Reuses the same cache and batch logic."""
+    if not should_translate_source(source_key) or not items_data:
+        yield json.dumps({"type": "done"}, ensure_ascii=False)
+        return
+
+    do_summary = should_translate_summary(source_key)
+
+    jobs = []
+    for item_data in items_data:
+        item_id = item_data.get("id", "")
+        title = (item_data.get("title") or "").strip()
+        if title:
+            jobs.append(({"id": item_id}, "title", title))
+        if do_summary:
+            summary = (item_data.get("summary") or "").strip()
+            if summary:
+                jobs.append(({"id": item_id}, "summary", summary))
+
+    if not jobs:
+        yield json.dumps({"type": "done"}, ensure_ascii=False)
+        return
+
+    cache_key = hashlib.sha256(
+        "\x00".join(original for _, _, original in jobs).encode("utf-8")
+    ).hexdigest()
+    now = time.time()
+    cached = TRANSLATION_CACHE.get(cache_key, now)
+
+    if cached is not None:
+        translations = cached
+    else:
+        translations = _translate_batch(jobs, max_tokens=8192)
+        if not translations and len(jobs) > 10:
+            batch_size = 10
+            translations = {}
+            for start in range(0, len(jobs), batch_size):
+                batch = jobs[start:start + batch_size]
+                batch_result = _translate_batch(batch, max_tokens=8192)
+                for local_i, text in batch_result.items():
+                    translations[str(start + int(local_i))] = text
+        if translations:
+            TRANSLATION_CACHE.set(cache_key, translations, now)
+
+    for i, (item, field, original) in enumerate(jobs):
+        translated = translations.get(str(i), "")
+        if not isinstance(translated, str):
+            translated = str(translated)
+        translated = translated.strip()
+        if translated and translated != original:
+            yield json.dumps({
+                "type": "translate",
+                "itemId": item["id"],
+                "field": field,
+                "translated": translated,
+            }, ensure_ascii=False)
+
+    yield json.dumps({"type": "done"}, ensure_ascii=False)
 
 
 def _call_ai_api_stream(prompt, *, system_prompt=TRANSLATION_SYSTEM_PROMPT, max_tokens=4096):
@@ -1520,12 +1591,11 @@ def stream_feed(query):
     remaining = [len(keys)]
 
     def process_source(key):
-        """Fetch a source, emit its items immediately, then translate
-        in the background and emit translation events as they complete."""
+        """Fetch a source and emit its items.  Translation is now on-demand:
+        the client requests it via /api/translate for visible cards only."""
         try:
             payload = fetch_source(key)
             event_q.put(("source", payload))
-            translate_items(payload["items"], key, event_q)
         except (
             urllib.error.URLError,
             urllib.error.HTTPError,
@@ -1743,6 +1813,39 @@ def create_flask_app():
             clean_items = [item for item in items if isinstance(item, dict)]
             for event in summary_events(clean_items):
                 yield json.dumps(event, ensure_ascii=False) + "\n"
+
+        return Response(
+            stream_with_context(generate()),
+            content_type="application/x-ndjson; charset=utf-8",
+            headers=api_headers(stream=True),
+        )
+
+    @flask_app.post("/api/translate")
+    def flask_translate():
+        if (request.content_length or 0) > 500_000:
+            return json_response({"error": "request too large"}, status=413)
+
+        ip = client_ip_from_headers(request.headers, request.remote_addr or "")
+        if not TRANSLATE_LIMITER.allow(ip):
+            return json_response({"error": "请求过于频繁，请稍后再试"}, status=429)
+
+        payload = request.get_json(silent=True) or {}
+        source_key = payload.get("source", "")
+        items = payload.get("items", [])
+        if source_key not in SOURCES:
+            return json_response({"error": "unknown source"}, status=400)
+        if not isinstance(items, list):
+            return json_response({"error": "invalid items"}, status=400)
+        if len(items) > TRANSLATE_MAX_ITEMS:
+            return json_response({"error": "too many items"}, status=400)
+
+        clean_items = [item for item in items if isinstance(item, dict)]
+
+        def generate():
+            yield from (
+                line + "\n"
+                for line in translate_events(clean_items, source_key)
+            )
 
         return Response(
             stream_with_context(generate()),

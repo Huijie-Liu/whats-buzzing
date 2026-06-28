@@ -8,6 +8,7 @@ import {
   activeGroupSources, sourceCount, setActiveGroup,
   findItemById, markRead,
   groupColumns, displayedItems,
+  shouldTranslateSource,
 } from './core.js';
 
 import {
@@ -16,6 +17,7 @@ import {
   summaryState,
   startSummaryFetch,
   setSummaryRefreshHandler,
+  translateVisible,
 } from './api.js';
 
 // =========================================================================
@@ -340,6 +342,64 @@ function applyLazyImage(node, imageUrl) {
 }
 
 // =========================================================================
+// On-demand translation (IntersectionObserver triggers per visible card)
+// =========================================================================
+
+let translationObserver = null;
+const translationQueue = new Map(); // sourceKey -> item[]
+let translationFlushId = null;
+
+function ensureTranslationObserver() {
+  if (translationObserver) return;
+  translationObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      const node = entry.target;
+      translationObserver.unobserve(node);
+      enqueueTranslation(node);
+    });
+  }, { rootMargin: "200px" });
+}
+
+function enqueueTranslation(node) {
+  const item = findItemById(node.dataset.itemId);
+  if (!item || item._translateRequested) return;
+  if (!shouldTranslateSource(item.source)) return;
+
+  item._translateRequested = true;
+
+  if (!translationQueue.has(item.source)) {
+    translationQueue.set(item.source, []);
+  }
+  translationQueue.get(item.source).push(item);
+
+  if (translationFlushId === null) {
+    translationFlushId = requestAnimationFrame(flushTranslationQueue);
+  }
+}
+
+function flushTranslationQueue() {
+  translationFlushId = null;
+  for (const [sourceKey, items] of translationQueue) {
+    translationQueue.delete(sourceKey);
+    translateVisible(sourceKey, items);
+  }
+}
+
+/** (Re)observe all on-screen cards that still need translation.  Safe to
+ *  call after any render — disconnects first so removed nodes don't leak. */
+function observeCardsForTranslation() {
+  ensureTranslationObserver();
+  translationObserver.disconnect();
+  feedCards().forEach((node) => {
+    const item = findItemById(node.dataset.itemId);
+    if (item && !item._translateRequested && shouldTranslateSource(item.source)) {
+      translationObserver.observe(node);
+    }
+  });
+}
+
+// =========================================================================
 // Rendering: Columns & skeletons
 // =========================================================================
 
@@ -421,6 +481,7 @@ function updateColumn(sourceKey) {
 
   addExpandButtons();
   restoreSelection();
+  observeCardsForTranslation();
 }
 
 // =========================================================================
@@ -517,6 +578,7 @@ export function render() {
   renderCategoryTabs();
   renderColumns();
   addExpandButtons();
+  observeCardsForTranslation();
 }
 
 // =========================================================================
@@ -1028,7 +1090,7 @@ function setupApiBridge() {
   setFeedStateHandler((action, payload) => {
     switch (action) {
       case "loading":
-        renderColumns();
+        render();
         resetFeedScroll();
         break;
       case "render":

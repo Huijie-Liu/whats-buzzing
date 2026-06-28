@@ -77,6 +77,67 @@ export async function loadFeed() {
 loadFeed._onStateChange = null;
 export function setFeedStateHandler(fn) { loadFeed._onStateChange = fn; }
 
+// ---- On-demand translation -----------------------------------------------
+
+/** Request translation for a batch of visible items from one source.
+ *  Streams translate events back and patches item state + DOM via the
+ *  same _onStateChange bridge used by loadFeed. */
+export async function translateVisible(sourceKey, items) {
+  if (!items.length) return;
+
+  const payload = {
+    source: sourceKey,
+    items: items.map((item) => ({
+      id: item.id,
+      title: item.title || "",
+      summary: item.summary || "",
+    })),
+  };
+
+  try {
+    const response = await fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok || !response.body) return;
+
+    const reader  = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+          if (event.type === "translate") {
+            const item = state.items.find((i) => i.id === event.itemId);
+            if (item) {
+              const field = event.field;
+              if (!item[`${field}Original`]) {
+                item[`${field}Original`] = item[field];
+              }
+              item[field] = event.translated;
+              loadFeed._onStateChange?.("translate", {
+                itemId: event.itemId,
+                field,
+              });
+            }
+          }
+        } catch { /* skip malformed */ }
+      }
+
+      if (done) break;
+    }
+  } catch { /* network error — silent, items stay untranslated */ }
+}
+
 // ---- AI Summary ----------------------------------------------------------
 
 export const summaryState = {

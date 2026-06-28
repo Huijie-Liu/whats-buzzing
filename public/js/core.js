@@ -103,6 +103,13 @@ export function sourceCount(sourceKey) {
   return Math.min(state.sourceCounts.get(sourceKey) || 0, MAX_ITEMS_PER_TAB);
 }
 
+// Sources whose content is already Chinese — skip translation.
+const NON_TRANSLATABLE_SOURCES = new Set(["zhihu", "google_zh", "linux_do", "linux_do_top"]);
+
+export function shouldTranslateSource(sourceKey) {
+  return !NON_TRANSLATABLE_SOURCES.has(sourceKey);
+}
+
 export function setActiveGroup(groupKey) {
   if (!SOURCE_GROUPS.some((g) => g.key === groupKey)) return;
   state.activeGroup = groupKey;
