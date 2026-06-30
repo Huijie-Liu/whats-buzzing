@@ -26,6 +26,8 @@ from server import (
     TTLLRU,
     client_ip_from_headers,
     debug_enabled,
+    read_limited,
+    stream_feed,
     should_translate_source,
     should_translate_summary,
     translate_items,
@@ -265,6 +267,20 @@ class UtilityTests(unittest.TestCase):
         c = make_item("economist", meta, title="C", url="https://x.com/c")
         self.assertEqual(len(dedupe_items([a, b, c])), 2)
 
+    def test_read_limited_caps_remote_response(self):
+        class FakeResponse:
+            def __init__(self):
+                self.requested = None
+
+            def read(self, size=-1):
+                self.requested = size
+                return b"x" * size
+
+        resp = FakeResponse()
+        data = read_limited(resp, limit=12)
+        self.assertEqual(data, b"x" * 12)
+        self.assertEqual(resp.requested, 12)
+
 
 class SafeUrlTests(unittest.TestCase):
     def test_rejects_non_http_schemes(self):
@@ -397,6 +413,37 @@ class DebugEnabledTests(unittest.TestCase):
         os.environ["VERCEL_ENV"] = "production"
         os.environ["ENABLE_DEBUG"] = "1"
         self.assertTrue(debug_enabled())
+
+
+class StreamFeedTests(unittest.TestCase):
+    def setUp(self):
+        import server
+        self._old_fetch_source = server.fetch_source
+
+    def tearDown(self):
+        import server
+        server.fetch_source = self._old_fetch_source
+
+    def test_stream_feed_emits_done_after_all_sources_complete(self):
+        import server
+
+        def fake_fetch_source(key):
+            meta = SOURCES[key]
+            return {
+                "key": key,
+                "label": meta["label"],
+                "short": meta["short"],
+                "accent": meta["accent"],
+                "home": meta["home"],
+                "latestBuildTime": "",
+                "items": [],
+            }
+
+        server.fetch_source = fake_fetch_source
+        lines = list(stream_feed({"source": ["hn"]}))
+        events = [json.loads(line) for line in lines]
+        self.assertEqual(events[-1]["type"], "done")
+        self.assertEqual(events[-1]["errors"], [])
 
 
 class TranslationSourceTests(unittest.TestCase):
@@ -630,6 +677,23 @@ class RunTranslationJobsTests(unittest.TestCase):
         result = _run_translation_jobs(jobs)
         self.assertEqual(result.get("0"), "译文0")
         self.assertGreater(call_count[0], 1)
+
+    def test_batch_fallback_ignores_non_numeric_keys(self):
+        import server
+        from server import _run_translation_jobs
+        call_count = [0]
+
+        def mock_call(prompt, **kw):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return iter(["not json"])
+            return iter([json.dumps({"0": "译文0", "note": "ignore me"})])
+
+        server._call_ai_api_stream = mock_call
+        jobs = [({"id": str(i)}, "title", f"Title {i}") for i in range(15)]
+        result = _run_translation_jobs(jobs)
+        self.assertEqual(result.get("0"), "译文0")
+        self.assertNotIn("note", result)
 
 
 class NonTranslatableSourcesSyncTests(unittest.TestCase):

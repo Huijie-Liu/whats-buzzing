@@ -676,7 +676,12 @@ def _run_translation_jobs(jobs):
             batch = jobs[start:start + batch_size]
             batch_result = _translate_batch(batch, max_tokens=8192)
             for local_i, text in batch_result.items():
-                translations[str(start + int(local_i))] = text
+                try:
+                    absolute_i = start + int(local_i)
+                except (TypeError, ValueError):
+                    continue
+                if 0 <= absolute_i < len(jobs):
+                    translations[str(absolute_i)] = text
 
     if translations:
         TRANSLATION_CACHE.set(cache_key, translations, now)
@@ -987,6 +992,7 @@ TITLE_RE = re.compile(r"<title[^>]*>(.+?)</title>", re.DOTALL | re.IGNORECASE)
 BODY_TEXT_RE = re.compile(r"<body[^>]*>(.*?)</body>", re.DOTALL | re.IGNORECASE)
 PREVIEW_CACHE_TTL = 600
 IMAGE_CACHE_TTL = 3600
+PREVIEW_MAX_BYTES = 1_000_000
 PREVIEW_CACHE = TTLLRU(PREVIEW_CACHE_TTL, 500)
 IMAGE_CACHE = TTLLRU(IMAGE_CACHE_TTL, 500)
 
@@ -1068,6 +1074,16 @@ def fetch_url(url, accept, extra_headers=None):
         return response.read()
 
 
+def read_limited(response, limit=PREVIEW_MAX_BYTES):
+    """Read at most *limit* bytes from a remote response.
+
+    Preview endpoints only need the document head / first paragraphs.  If a
+    remote page exceeds the cap, keep the prefix and stop reading so one URL
+    cannot force the server to buffer an arbitrary response in memory.
+    """
+    return response.read(limit)
+
+
 def fetch_preview_url(url):
     parsed = urllib.parse.urlparse(url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -1081,7 +1097,7 @@ def fetch_preview_url(url):
     }
     request = urllib.request.Request(url, headers=headers)
     with _SAFE_OPENER.open(request, timeout=12) as response:
-        raw = response.read()
+        raw = read_limited(response)
         charset = response.headers.get_content_charset() or "utf-8"
         return raw.decode(charset, errors="replace")
 
@@ -1099,7 +1115,7 @@ def fetch_preview_image(url):
     }
     request = urllib.request.Request(url, headers=headers)
     with _SAFE_OPENER.open(request, timeout=10) as response:
-        raw = response.read()
+        raw = read_limited(response)
         charset = response.headers.get_content_charset() or "utf-8"
         image = extract_og_image(raw.decode(charset, errors="replace"))
         return upscale_image_url(image)
@@ -1581,7 +1597,6 @@ def stream_feed(query):
 
     errors = []
     event_q: Queue = Queue()
-    remaining = [len(keys)]
 
     def process_source(key):
         """Fetch a source and emit its items.  Translation is now on-demand:
@@ -1601,18 +1616,15 @@ def stream_feed(query):
         except Exception as exc:
             event_q.put(("error", key, f"unexpected: {exc}"))
         finally:
-            remaining[0] -= 1
-            if remaining[0] == 0:
-                event_q.put(None)
+            event_q.put(("complete", key))
 
     with ThreadPoolExecutor(max_workers=min(5, len(keys))) as pool:
         for key in keys:
             pool.submit(process_source, key)
 
+        completed = 0
         while True:
             event = event_q.get()
-            if event is None:
-                break
             kind = event[0]
             if kind == "source":
                 payload = event[1]
@@ -1636,6 +1648,10 @@ def stream_feed(query):
                 }, ensure_ascii=False)
             elif kind == "error":
                 errors.append({"source": event[1], "message": event[2]})
+            elif kind == "complete":
+                completed += 1
+                if completed >= len(keys):
+                    break
 
     yield json.dumps({
         "type": "done",

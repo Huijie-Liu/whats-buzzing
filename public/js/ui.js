@@ -675,7 +675,7 @@ function dismissSummaryModal() {
 
 function buildSummaryBody() {
   if (summaryState.error) {
-    return `<div class="summary-text summary-error">${summaryState.error}</div>`;
+    return `<div class="summary-text summary-error">${escapeHtml(summaryState.error)}</div>`;
   }
   if (summaryState.loading) {
     const partial = summaryState.text || "";
@@ -1038,7 +1038,11 @@ function handleVimKey(e) {
 
   if (k === "Escape") {
     if (isTypingTarget(e.target)) e.target.blur();
-    document.querySelector(".kbd-help")?.remove();
+    const help = document.querySelector(".kbd-help");
+    if (help) {
+      unmountOverlay(help);
+      help.remove();
+    }
     dismissSummaryModal();
     clearSelection();
     return;
