@@ -81,7 +81,7 @@ SOURCES = {
         "kind": "hn",
         "home": "https://news.ycombinator.com/",
         "accent": "#f0652f",
-        "category": "tech",
+        "category": "hot",
         "story_limit": 20,
     },
     "economist": {
@@ -1186,6 +1186,7 @@ def fetch_preview_image(url):
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
+        "Referer": origin + "/",
     }
     if _CURL_CFFI_AVAILABLE:
         try:
@@ -1196,7 +1197,6 @@ def fetch_preview_image(url):
         except (urllib.error.URLError, TimeoutError):
             return ""
     request = urllib.request.Request(url, headers=headers)
-    request.add_header("Referer", origin + "/")
     request.add_header("DNT", "1")
     with _SAFE_OPENER.open(request, timeout=10) as response:
         raw = read_limited(response)

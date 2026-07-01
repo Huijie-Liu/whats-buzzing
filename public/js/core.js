@@ -15,6 +15,7 @@ export const SOURCE_GROUPS = [
 export const SOURCES = [
   { key: "zhihu",      label: "知乎热榜",       accent: "#0066ff", group: "hot" },
   { key: "linux_do_top", label: "LINUX DO 热榜", accent: "#0a8ed6", group: "hot" },
+  { key: "hn",         label: "Hacker News",    accent: "#f0652f", group: "hot" },
   { key: "google",     label: "Google News 美国", accent: "#1a73e8", group: "hot" },
   { key: "google_zh",  label: "Google News 中国", accent: "#34a853", group: "hot" },
   { key: "reuters",    label: "路透社",         accent: "#ff8000", group: "general" },
@@ -25,7 +26,6 @@ export const SOURCES = [
   { key: "newyorker",  label: "纽约客",         accent: "#e60000", group: "general" },
   { key: "bloomberg",  label: "彭博社",         accent: "#0068ff", group: "business" },
   { key: "economist",  label: "经济学人",       accent: "#d71920", group: "business" },
-  { key: "hn",         label: "Hacker News",    accent: "#f0652f", group: "tech" },
   { key: "verge",      label: "The Verge",      accent: "#e2127a", group: "tech" },
   { key: "mit_tech",   label: "MIT 科技评论",   accent: "#ff5a00", group: "tech" },
   { key: "linux_do",   label: "LINUX DO",       accent: "#0088cc", group: "tech" },
