@@ -53,11 +53,14 @@ export function setTheme(theme) {
 /** Update a theme toggle button's icon/label to reflect the current theme. */
 function syncThemeButton(btn) {
   if (!btn) return;
-  const span = btn.querySelector("span");
-  if (span) span.textContent = state.theme === "dark" ? "☀" : "☾";
-  const label = state.theme === "dark" ? "切换日间模式" : "切换夜间模式";
+  // Swap SVG icon: sun for dark mode (click to light), moon for light mode (click to dark)
+  const isDark = state.theme === "dark";
+  const label = isDark ? "切换日间模式" : "切换夜间模式";
   btn.setAttribute("aria-label", label);
   btn.title = label;
+  btn.innerHTML = isDark
+    ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`
+    : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>`;
 }
 
 // =========================================================================
@@ -681,17 +684,13 @@ function buildSummaryBody() {
     const partial = summaryState.text || "";
     return partial
       ? `<div class="summary-text streaming">${escapeHtml(partial).replace(/\n/g, '<br>')}<span class="summary-cursor">|</span></div>`
-      : `<div class="summary-loading">
-             <span class="summary-spinner"></span>
-             <span>正在生成总结...</span>
-           </div>
-           <div class="summary-skeleton">
-             <div class="summary-sk-line"></div>
-             <div class="summary-sk-line short"></div>
-             <div class="summary-sk-line"></div>
-             <div class="summary-sk-line short"></div>
-             <div class="summary-sk-line medium"></div>
-           </div>`;
+      : `<div class="summary-skeleton">
+           <div class="summary-sk-line"></div>
+           <div class="summary-sk-line short"></div>
+           <div class="summary-sk-line"></div>
+           <div class="summary-sk-line short"></div>
+           <div class="summary-sk-line medium"></div>
+         </div>`;
   }
   if (summaryState.text) {
     const { toc, html } = parseSummary(summaryState.text);
@@ -776,11 +775,11 @@ function refreshModalBody() {
   const title = summaryState.modal.querySelector(".summary-title");
   if (title) {
     if (summaryState.loading) {
-      title.innerHTML = '<span class="summary-spinner"></span> AI 正在生成今日要闻总结...';
+      title.textContent = 'AI 正在生成今日要闻总结…';
     } else if (summaryState.error) {
-      title.textContent = '⚠️ 总结生成失败';
+      title.textContent = '总结生成失败';
     } else {
-      title.textContent = '✨ AI 今日要闻总结';
+      title.textContent = 'AI 今日要闻总结';
     }
   }
 
@@ -798,21 +797,25 @@ function buildSummaryModal() {
   modal.setAttribute("aria-labelledby", "summary-title");
   summaryState.modal = modal;
 
-  const statusIcon = summaryState.loading
-    ? '<span class="summary-spinner"></span>'
-    : summaryState.error ? '⚠️' : '✨';
-
   const headerText = summaryState.loading
-    ? 'AI 正在生成今日要闻总结...'
+    ? 'AI 正在生成今日要闻总结…'
     : summaryState.error ? '总结生成失败' : 'AI 今日要闻总结';
 
   modal.innerHTML = `
     <div class="summary-card">
       <div class="summary-card-header">
-        <span class="summary-title" id="summary-title">${statusIcon} ${headerText}</span>
+        <span class="summary-title" id="summary-title">${headerText}</span>
         <div class="summary-actions">
-          <button class="summary-action summary-theme" type="button" aria-label="切换夜间模式" title="切换夜间模式"><span>☾</span></button>
-          <button class="summary-close" type="button" aria-label="关闭">✕</button>
+          <button class="summary-action summary-theme" type="button" aria-label="切换夜间模式" title="切换夜间模式">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>
+            </svg>
+          </button>
+          <button class="summary-close" type="button" aria-label="关闭">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
         </div>
       </div>
       <div class="summary-card-body">${buildSummaryBody()}</div>
