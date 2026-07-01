@@ -1161,11 +1161,17 @@ def fetch_preview_url(url):
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
-        "Referer": origin + "/",
-        "DNT": "1",
-        "Upgrade-Insecure-Requests": "1",
     }
+    if _CURL_CFFI_AVAILABLE:
+        try:
+            raw = _curl_fetch(url, headers, timeout=12)
+            return raw.decode("utf-8", errors="replace")
+        except (urllib.error.URLError, TimeoutError):
+            pass
     request = urllib.request.Request(url, headers=headers)
+    request.add_header("Referer", origin + "/")
+    request.add_header("DNT", "1")
+    request.add_header("Upgrade-Insecure-Requests", "1")
     with _SAFE_OPENER.open(request, timeout=12) as response:
         raw = read_limited(response)
         charset = response.headers.get_content_charset() or "utf-8"
@@ -1180,10 +1186,18 @@ def fetch_preview_image(url):
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
-        "Referer": origin + "/",
-        "DNT": "1",
     }
+    if _CURL_CFFI_AVAILABLE:
+        try:
+            raw = _curl_fetch(url, headers, timeout=12)
+            html_text = raw.decode("utf-8", errors="replace")
+            image = extract_og_image(html_text)
+            return upscale_image_url(image)
+        except (urllib.error.URLError, TimeoutError):
+            return ""
     request = urllib.request.Request(url, headers=headers)
+    request.add_header("Referer", origin + "/")
+    request.add_header("DNT", "1")
     with _SAFE_OPENER.open(request, timeout=10) as response:
         raw = read_limited(response)
         charset = response.headers.get_content_charset() or "utf-8"
