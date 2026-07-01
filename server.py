@@ -273,12 +273,30 @@ SOURCES = {
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         },
     },
-    "hupu": {
-        "label": "虎扑热帖",
-        "short": "虎扑",
-        "kind": "hupu",
-        "home": "https://bbs.hupu.com/",
+    "hupu_nba": {
+        "label": "虎扑-篮球",
+        "short": "虎扑NBA",
+        "kind": "hupu_sub",
+        "home": "https://bbs.hupu.com/all-nba",
         "accent": "#c41230",
+        "category": "sports",
+        "story_limit": 20,
+    },
+    "hupu_soccer": {
+        "label": "虎扑-足球",
+        "short": "虎扑足球",
+        "kind": "hupu_sub",
+        "home": "https://bbs.hupu.com/all-soccer",
+        "accent": "#019f4b",
+        "category": "sports",
+        "story_limit": 20,
+    },
+    "hupu_lol": {
+        "label": "虎扑-LOL",
+        "short": "虎扑LOL",
+        "kind": "hupu_sub",
+        "home": "https://bbs.hupu.com/lol",
+        "accent": "#6b3fa0",
         "category": "sports",
         "story_limit": 20,
     },
@@ -583,7 +601,7 @@ _deepseek_client = openai.OpenAI(
 # =========================================================================
 
 # Sources whose content is already Chinese — skip translation entirely.
-NON_TRANSLATABLE_SOURCES = {"zhihu", "google_zh", "linux_do", "linux_do_top", "hupu"}
+NON_TRANSLATABLE_SOURCES = {"zhihu", "google_zh", "linux_do", "linux_do_top", "hupu_nba", "hupu_soccer", "hupu_lol"}
 
 # Sources whose ``summary`` field carries meaningful prose worth translating.
 # HN (author name), Reuters (no summary), Google (publisher name) are excluded.
@@ -1765,19 +1783,25 @@ def fetch_zhihu(source_key):
     return source_payload(source_key, items[:target], iso_now())
 
 
-# Hupu post patterns: title, link, section, lights (upvotes), replies
-_HUPU_ITEM_RE = re.compile(
+# Hupu sub-forum patterns — two HTML formats:
+# Format A (all-nba, all-soccer, main page): <span class="t-title">, t-lights, t-replies
+# Format B (lol): <div class="post-title"><a class="p-title">, post-datum
+_HUPU_TITLE_RE = re.compile(
     r'<span class="t-title">(.+?)</span>.*?'
     r'<span class="t-lights">(\d+)亮</span>.*?'
     r'<span class="t-replies">(\d+)回复</span>',
     re.DOTALL,
 )
+_HUPU_POST_RE = re.compile(
+    r'<div class="post-title"><a href="(/\d+\.html)"[^>]*class="p-title"[^>]*>([^<]+)</a></div>\s*'
+    r'<div class="post-datum">(\d+)\s*/\s*\d+</div>',
+    re.DOTALL,
+)
 _HUPU_LINK_RE = re.compile(r'<a href="(/\d+\.html)"')
 
 
-def fetch_hupu(source_key):
-    meta = SOURCES[source_key]
-    url = meta["home"]
+def _fetch_hupu_html(url):
+    """Fetch a Hupu page, returning decoded HTML or raising on failure."""
     raw = None
     if _CURL_CFFI_AVAILABLE:
         try:
@@ -1794,48 +1818,60 @@ def fetch_hupu(source_key):
         })
         with _SAFE_OPENER.open(req, timeout=18) as resp:
             raw = resp.read()
-    html_text = raw.decode("utf-8", errors="replace")
+    return raw.decode("utf-8", errors="replace")
 
-    # Track current section from <div class="list-title"> blocks
-    section_re = re.compile(r'<div class="list-title">(.+?)</div>')
+
+def fetch_hupu_sub(source_key):
+    meta = SOURCES[source_key]
+    html_text = _fetch_hupu_html(meta["home"])
 
     items = []
     seen_urls = set()
 
-    # Split into chunks between section headers
-    chunks = section_re.split(html_text)
-    # First chunk (index 0) is before any section header — skip it
-    for i in range(1, len(chunks), 2):
-        section = chunks[i].strip()
-        block = chunks[i + 1] if i + 1 < len(chunks) else ""
-
-        for m in _HUPU_ITEM_RE.finditer(block):
+    # Detect format: prefer the one with more matches on this page
+    t_matches = len(_HUPU_TITLE_RE.findall(html_text))
+    p_matches = len(_HUPU_POST_RE.findall(html_text))
+    use_post_format = p_matches > t_matches
+    if use_post_format:
+        for m in _HUPU_POST_RE.finditer(html_text):
+            post_url = "https://bbs.hupu.com" + m.group(1)
+            title = m.group(2).strip()
+            replies = m.group(3)
+            if not title or post_url in seen_urls:
+                continue
+            seen_urls.add(post_url)
+            item_id = m.group(1).lstrip("/").replace(".html", "")
+            items.append(make_item(
+                source_key, meta,
+                title=title,
+                url=post_url,
+                summary=f"{replies}回复",
+                published_at="",
+                item_id=item_id,
+                comments=int(replies) if replies.isdigit() else 0,
+            ))
+    else:
+        for m in _HUPU_TITLE_RE.finditer(html_text):
             title = m.group(1).strip()
             lights = m.group(2)
             replies = m.group(3)
             if not title:
                 continue
-
-            # Find the URL for this item
-            # Search the HTML fragment around this match for the href
             start = max(0, m.start() - 200)
-            end = min(len(block), m.end() + 200)
-            fragment = block[start:end]
+            fragment = html_text[start:m.end() + 200]
             link_m = _HUPU_LINK_RE.search(fragment)
             if not link_m:
                 continue
             post_url = "https://bbs.hupu.com" + link_m.group(1)
-
             if post_url in seen_urls:
                 continue
             seen_urls.add(post_url)
-
             item_id = link_m.group(1).lstrip("/").replace(".html", "")
             items.append(make_item(
                 source_key, meta,
                 title=title,
                 url=post_url,
-                summary=f"[{section}] {lights}亮 · {replies}回复",
+                summary=f"{lights}亮 · {replies}回复",
                 published_at="",
                 item_id=item_id,
                 score=int(lights) if lights.isdigit() else 0,
@@ -1856,8 +1892,8 @@ def fetch_source(source_key):
     kind = SOURCES[source_key]["kind"]
     if kind == "zhihu":
         payload = fetch_zhihu(source_key)
-    elif kind == "hupu":
-        payload = fetch_hupu(source_key)
+    elif kind == "hupu_sub":
+        payload = fetch_hupu_sub(source_key)
     elif kind == "hn":
         payload = fetch_hn(source_key)
     elif kind == "rss":
