@@ -1172,7 +1172,7 @@ def fetch_preview_image(url):
     }
     if _CURL_CFFI_AVAILABLE:
         try:
-            raw = _curl_fetch(url, headers, timeout=12)
+            raw = _curl_fetch(url, headers, timeout=18)
             html_text = raw.decode("utf-8", errors="replace")
             image = extract_og_image(html_text)
             return upscale_image_url(image)
