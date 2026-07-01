@@ -79,6 +79,9 @@ def extract_snippet(html_text):
     return ""
 
 
+_HUPU_IMAGE_CACHE = {}  # post_id → image_url (short-lived, cleared per request)
+
+
 def extract_og_image(html_text):
     m = OG_IMAGE_RE.search(html_text)
     if m:
@@ -87,7 +90,73 @@ def extract_og_image(html_text):
             url = _html.unescape(url).strip()
             if url.startswith("http"):
                 return url
+    # Hupu: extract from Next.js __NEXT_DATA__ SSR payload
+    if 'hoopchina' in html_text or 'hupu' in html_text:
+        img = _extract_hupu_image(html_text)
+        if img:
+            return img
     return ""
+
+
+def _extract_hupu_image(html_text):
+    """Extract the first post image from a Hupu post detail page's
+    ``__NEXT_DATA__`` SSR JSON payload.
+
+    Scans ``thread.cardList[].image`` and ``thread.content`` for images.
+    Returns ``""`` if no image is found."""
+    import json as _json
+    m = re.search(
+        r'<script\s+id="__NEXT_DATA__"\s+type="application/json">(.*?)</script>',
+        html_text, re.DOTALL,
+    )
+    if not m:
+        return ""
+    try:
+        data = _json.loads(m.group(1))
+    except (ValueError, _json.JSONDecodeError):
+        return ""
+
+    def _first_str(pool):
+        """Depth-first walk for a string that looks like an image URL."""
+        if isinstance(pool, str):
+            return pool if (pool.startswith("http") and _looks_like_image(pool)) else None
+        if isinstance(pool, dict):
+            for key in ("image", "cover", "imgs", "img", "images"):
+                val = pool.get(key)
+                if isinstance(val, str) and val.startswith("http") and _looks_like_image(val):
+                    return val
+            for val in pool.values():
+                result = _first_str(val)
+                if result:
+                    return result
+        if isinstance(pool, list):
+            for item in pool:
+                result = _first_str(item)
+                if result:
+                    return result
+        return None
+
+    detail = data.get("props", {}).get("pageProps", {}).get("detail", {})
+    if not isinstance(detail, dict):
+        return ""
+    thread = detail.get("thread")
+    if isinstance(thread, dict):
+        img = _first_str(thread.get("cardList"))
+        if img:
+            # Upgrade to HTTPS for mixed-content safety
+            if img.startswith("http://"):
+                img = "https://" + img[7:]
+            return img
+    return ""
+
+
+def _looks_like_image(url):
+    """True if *url* appears to be a real image (not a UI asset like a logo)."""
+    bad = ("logo", "icon", "avatar", "error", "favicon", "bg.", "static/")
+    url_lower = url.lower()
+    return not any(b in url_lower for b in bad) and any(
+        url_lower.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif")
+    )
 
 
 def upscale_image_url(url):
