@@ -831,6 +831,19 @@ class CurlFetchTests(unittest.TestCase):
     # fetch_url — routing
     # ------------------------------------------------------------------
 
+    def test_fetch_url_rejects_unsafe_url_with_curl_cffi(self):
+        """fetch_url raises URLError for internal URLs even with curl_cffi."""
+        import server
+        import urllib.error
+
+        server._CURL_CFFI_AVAILABLE = True
+
+        with self.assertRaises(urllib.error.URLError):
+            server.fetch_url(
+                "http://127.0.0.1/secret",
+                "application/rss+xml",
+            )
+
     def test_fetch_url_uses_urllib_when_curl_cffi_unavailable(self):
         """fetch_url falls back to urllib when _CURL_CFFI_AVAILABLE is False."""
         from unittest.mock import MagicMock, patch

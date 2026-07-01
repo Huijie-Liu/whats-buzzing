@@ -60,7 +60,7 @@ PORT = int(os.environ.get("PORT", "8765"))
 CACHE_SECONDS = 180
 
 REQUEST_HEADERS = {
-    "User-Agent": "Mozilla/5.0 NewsFocus/1.0",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Accept-Language": "en-US,en;q=0.9",
 }
 
@@ -446,7 +446,8 @@ def _curl_fetch(url, headers, timeout=18):
     urllib-compatible equivalents so existing catch blocks in
     ``fetch_feed_collection`` and ``stream_feed`` handle them uniformly.
 
-    Callers must only invoke this when ``_CURL_CFFI_AVAILABLE`` is True.
+    Callers must only invoke this when ``_CURL_CFFI_AVAILABLE`` is True, and
+    should validate the initial URL with ``is_safe_url()`` beforehand.
     """
     try:
         resp = curl_cffi.requests.get(
@@ -462,10 +463,6 @@ def _curl_fetch(url, headers, timeout=18):
         raise TimeoutError(str(e)) from e
     except curl_cffi.requests.exceptions.HTTPError as e:
         raise urllib.error.URLError(f"HTTP error: {e}") from e
-    except curl_cffi.requests.exceptions.ConnectionError as e:
-        raise urllib.error.URLError(str(e)) from e
-    except curl_cffi.requests.exceptions.TooManyRedirects as e:
-        raise urllib.error.URLError(str(e)) from e
     except curl_cffi.requests.exceptions.RequestException as e:
         raise urllib.error.URLError(str(e)) from e
 
@@ -1109,6 +1106,11 @@ def fetch_url(url, accept, extra_headers=None):
         headers.update(extra_headers)
     headers["Accept"] = accept
     if _CURL_CFFI_AVAILABLE:
+        # Validate initial URL against the full SSRF blocklist (defence in
+        # depth — feed URLs are hardcoded, but this catches misconfiguration).
+        # CurlFollow.SAFE handles redirect-hop validation inside _curl_fetch.
+        if not is_safe_url(url):
+            raise urllib.error.URLError(f"unsafe url: {url}")
         return _curl_fetch(url, headers)
     # Fallback: standard urllib with SSRF-safe redirect handling
     # (defence in depth for environments where curl_cffi can't import).
