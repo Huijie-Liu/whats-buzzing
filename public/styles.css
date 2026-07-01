@@ -8,54 +8,75 @@
    ========================================================================= */
 
 :root {
-  color-scheme: light dark;
+  /* ---- Surface & Ink ---- */
+  --bg:         #f7f8f8;
+  --panel:      #ffffff;
+  --ink:        #191b1f;
+  --muted:      #6f747c;
+  --line:       #dfe3e6;
+  --line-strong:#c9cfd4;
+  --soft:       #eef1f2;
 
-  /* ---- Surface & Ink (iOS system colors) ---- */
-  --bg:         system-grouped-background;
-  --panel:      secondary-system-grouped-background;
-  --ink:        label;
-  --muted:      secondary-label;
-  --line:       separator;
-  --line-strong:opaque-separator;
-  --soft:       system-fill;
-
-  /* ---- Shape (iOS HIG radii) ---- */
-  --radius-sm:  6px;
-  --radius-md:  10px;
-  --radius-lg:  16px;
+  /* ---- Shape ---- */
+  --radius-sm:  4px;
+  --radius-md:  8px;
+  --radius-lg:  14px;
   --radius-full: 999px;
 
-  /* ---- Elevation (iOS uses translucency, not shadows) ---- */
-  --shadow-sm:  none;
-  --shadow-md:  none;
-  --shadow-lg:  none;
-  --shadow-xl:  none;
+  /* ---- Elevation ---- */
+  --shadow-sm:  0 1px 2px rgba(25, 27, 31, 0.08);
+  --shadow-md:  0 8px 24px rgba(25, 27, 31, 0.07);
+  --shadow-lg:  0 18px 45px rgba(25, 27, 31, 0.08);
+  --shadow-xl:  0 24px 60px rgba(15, 17, 21, 0.3);
 
-  /* ---- Topbar (liquid glass via system material) ---- */
-  --topbar-bg:   system-thin-material;
-  --topbar-line: separator;
+  /* ---- Topbar (frosted) ---- */
+  --topbar-bg:   rgba(247, 248, 248, 0.92);
+  --topbar-line: rgba(223, 227, 230, 0.86);
 
-  /* ---- Typography (SF Pro native) ---- */
-  --font-display: -apple-system, "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif;
-  --font-body:    -apple-system, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
-  --font-mono:    ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
+  /* ---- Typography ---- */
+  --font-display: "Lora", "Georgia", "Songti SC", "STSong", "Noto Serif CJK SC", serif;
+  --font-body:    system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display",
+                  "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono:    ui-monospace, "SF Mono", "Fira Code", "Cascadia Code", "Menlo", "Consolas", monospace;
 
   /* ---- Semantic ---- */
-  --notice-bg:     system-yellow;
-  --notice-border: system-orange;
-  --notice-ink:    label;
-  --summary-ink:   secondary-label;
-  --read-bg:       system-fill;
-  --read-border:   separator;
-  --read-title:    tertiary-label;
-  --read-muted:    quaternary-label;
-  --overlay-bg:    rgba(0, 0, 0, 0.3);
+  --notice-bg:     #fff7f1;
+  --notice-border: #f2c0a0;
+  --notice-ink:    #84430e;
+  --summary-ink:   #3e434a;
+  --read-bg:       #f1f3f4;
+  --read-border:   #e3e7ea;
+  --read-title:    #7b838c;
+  --read-muted:    #8b929a;
+  --overlay-bg:    rgba(15, 17, 21, 0.42);
 }
 
-/* Dark theme override — system colors auto-resolve.  Only need to
-   flip color-scheme so scrollbars and form controls follow suit. */
+/* ---- Dark theme ---- */
+
 body.theme-dark {
   color-scheme: dark;
+  --bg:         #101216;
+  --panel:      #171a20;
+  --ink:        #e8ecf1;
+  --muted:      #98a2ad;
+  --line:       #29313a;
+  --line-strong:#3a4550;
+  --soft:       #20252b;
+  --shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.34);
+  --shadow-md:  0 8px 24px rgba(0, 0, 0, 0.28);
+  --shadow-lg:  0 18px 45px rgba(0, 0, 0, 0.34);
+  --shadow-xl:  0 24px 60px rgba(15, 17, 21, 0.3);
+  --topbar-bg:   rgba(16, 18, 22, 0.92);
+  --topbar-line: rgba(41, 49, 58, 0.9);
+  --notice-bg:     #281d15;
+  --notice-border: #744822;
+  --notice-ink:    #efbf8f;
+  --summary-ink:   #c5ccd4;
+  --read-bg:       #15181d;
+  --read-border:   #242b33;
+  --read-title:    #7f8994;
+  --read-muted:    #707984;
+  --overlay-bg:    rgba(15, 17, 21, 0.42);
 }
 
 /* =========================================================================
@@ -207,8 +228,8 @@ h1 {
   z-index: 10;
   border-bottom: 1px solid var(--topbar-line);
   background: var(--topbar-bg);
-  backdrop-filter: blur(30px) saturate(180%);
-  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   padding: 0;
 
   /* Inner wrapper */
@@ -419,7 +440,8 @@ h1 {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: var(--panel);
-  transition: border-color 0.22s ease, background-color 0.22s ease;
+  box-shadow: 0 1px 0 rgba(25, 27, 31, 0.02);
+  transition: border-color 0.22s ease, background-color 0.22s ease, box-shadow 0.22s ease;
 
   /* ---- States ---- */
 
@@ -690,10 +712,10 @@ h1 {
 /* ---- AI Summary button ---- */
 
 .summary-button {
-  color: system-orange;
+  color: #f0a030;
   transition: color 0.22s ease, border-color 0.22s ease;
 
-  &:hover { color: system-orange; }
+  &:hover { color: #d4880c; }
 
   &.summary-loading {
     animation: summary-border-pulse 1.8s ease-in-out infinite;
@@ -710,14 +732,14 @@ h1 {
       width: 7px;
       height: 7px;
       border-radius: 50%;
-      background: system-green;
+      background: #34a853;
       box-shadow: 0 0 0 2px var(--panel);
     }
   }
 
   &.summary-flash {
-    color: system-green !important;
-    border-color: system-green;
+    color: #34a853 !important;
+    border-color: #34a853;
     transition: color 0.12s ease, border-color 0.12s ease;
   }
 }
@@ -737,7 +759,7 @@ h1 {
   color: var(--muted);
   cursor: pointer;
   font-size: 17px;
-  box-shadow: none;
+  box-shadow: 0 4px 14px rgba(25, 27, 31, 0.12);
   opacity: 0;
   transform: translateY(8px);
   pointer-events: none;
@@ -881,7 +903,7 @@ h1 {
 
 .summary-cursor {
   display: inline;
-  color: system-orange;
+  color: #f0a030;
   animation: cursor-blink 0.7s step-end infinite;
 }
 
@@ -993,7 +1015,7 @@ h1 {
 
   &:hover {
     background: var(--cite-color, #888);
-    color: white;
+    color: #fff;
     transform: translateY(-1px);
   }
 }
@@ -1128,7 +1150,7 @@ h1 {
 
 @keyframes summary-border-pulse {
   0%, 100% { border-color: var(--line); }
-  50%      { border-color: system-orange; }
+  50%      { border-color: #f0a030; }
 }
 
 @keyframes heat-glow {
