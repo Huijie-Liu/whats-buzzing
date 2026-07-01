@@ -1110,6 +1110,7 @@ h1 {
   .card-stats {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 10px;
     flex-wrap: wrap;
 
