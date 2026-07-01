@@ -1400,7 +1400,11 @@ function bindEvents() {
 function updateLastUpdatedDisplay() {
   if (state.lastUpdated && els.lastUpdated) {
     els.lastUpdated.hidden = false;
-    els.lastUpdated.textContent = `更新于 ${formatRelativeTime(state.lastUpdated)}`;
+    const time = formatRelativeTime(state.lastUpdated);
+    // On narrow screens omit the prefix to save space in the topbar
+    els.lastUpdated.textContent = window.innerWidth <= 540
+      ? time
+      : `更新于 ${time}`;
   }
 }
 

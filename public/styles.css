@@ -1313,6 +1313,11 @@ h1 {
     font-size: 16px;
   }
 
+  .last-updated {
+    font-size: 10px;
+    margin-left: 2px;
+  }
+
   .icon-button {
     width: 34px;
     height: 34px;
