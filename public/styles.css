@@ -587,6 +587,9 @@ h1 {
    ========================================================================= */
 
 .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--line);
   cursor: pointer;
   color: var(--muted);
@@ -594,9 +597,12 @@ h1 {
   height: 38px;
   border-radius: 8px;
   background: var(--panel);
-  font-size: 19px;
   line-height: 1;
   transition: color 0.15s ease, border-color 0.15s ease;
+
+  svg {
+    flex-shrink: 0;
+  }
 
   &:hover {
     color: var(--ink);
