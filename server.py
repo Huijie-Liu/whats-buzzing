@@ -1143,6 +1143,9 @@ def fetch_preview_url(url):
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
+        "Referer": origin + "/",
+        "DNT": "1",
+        "Upgrade-Insecure-Requests": "1",
     }
     if _CURL_CFFI_AVAILABLE:
         try:
@@ -1151,9 +1154,6 @@ def fetch_preview_url(url):
         except (urllib.error.URLError, TimeoutError):
             pass
     request = urllib.request.Request(url, headers=headers)
-    request.add_header("Referer", origin + "/")
-    request.add_header("DNT", "1")
-    request.add_header("Upgrade-Insecure-Requests", "1")
     with _SAFE_OPENER.open(request, timeout=12) as response:
         raw = read_limited(response)
         charset = response.headers.get_content_charset() or "utf-8"
@@ -1177,7 +1177,7 @@ def fetch_preview_image(url):
             image = extract_og_image(html_text)
             return upscale_image_url(image)
         except (urllib.error.URLError, TimeoutError):
-            return ""
+            pass
     request = urllib.request.Request(url, headers=headers)
     request.add_header("DNT", "1")
     with _SAFE_OPENER.open(request, timeout=10) as response:
@@ -1378,9 +1378,8 @@ def _guess_publisher_from_url(url):
     """Guess a publisher name from an image URL domain."""
     url_lower = url.lower()
     for domain_pattern, name in _PUBLISHER_DOMAINS.items():
-        for pat in domain_pattern.split("|"):
-            if pat in url_lower:
-                return name
+        if domain_pattern in url_lower:
+            return name
     return ""
 
 
@@ -1779,12 +1778,16 @@ _HUPU_LINK_RE = re.compile(r'<a href="(/\d+\.html)"')
 def fetch_hupu(source_key):
     meta = SOURCES[source_key]
     url = meta["home"]
+    raw = None
     if _CURL_CFFI_AVAILABLE:
-        raw = _curl_fetch(url, {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        })
-    else:
+        try:
+            raw = _curl_fetch(url, {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            })
+        except (urllib.error.URLError, TimeoutError):
+            pass
+    if raw is None:
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -1794,7 +1797,6 @@ def fetch_hupu(source_key):
     html_text = raw.decode("utf-8", errors="replace")
 
     # Track current section from <div class="list-title"> blocks
-    section = ""
     section_re = re.compile(r'<div class="list-title">(.+?)</div>')
 
     items = []

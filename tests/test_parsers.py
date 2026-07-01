@@ -98,7 +98,7 @@ class ParseAtomTests(unittest.TestCase):
 
 class ParseGoogleRSSTests(unittest.TestCase):
     def test_strips_publisher_suffix_and_filters_print_edition(self):
-        meta = SOURCES["google"]
+        meta = SOURCES["google_zh"]
         raw = b"""<?xml version="1.0"?>
 <rss version="2.0"><channel>
   <item>
@@ -115,7 +115,7 @@ class ParseGoogleRSSTests(unittest.TestCase):
     <guid>g2</guid>
   </item>
 </channel></rss>"""
-        items, _ = parse_google_rss("google", meta, raw)
+        items, _ = parse_google_rss("google_zh", meta, raw)
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["title"], "Some headline")
         self.assertEqual(items[0]["summary"], "Reuters")

@@ -40,6 +40,22 @@ function cacheElements() {
 }
 
 // =========================================================================
+// Shared SVG icons (size in px)
+// =========================================================================
+
+function sunIcon(size = 20) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`;
+}
+
+function moonIcon(size = 20) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>`;
+}
+
+function closeIcon(size = 18) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>`;
+}
+
+// =========================================================================
 // Theme
 // =========================================================================
 
@@ -58,9 +74,7 @@ function syncThemeButton(btn) {
   const label = isDark ? "切换日间模式" : "切换夜间模式";
   btn.setAttribute("aria-label", label);
   btn.title = label;
-  btn.innerHTML = isDark
-    ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`
-    : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>`;
+  btn.innerHTML = isDark ? sunIcon() : moonIcon();
 }
 
 // =========================================================================
@@ -243,7 +257,7 @@ function buildSourceFeatures(node, item, sourceKey, mainUrl, links) {
   }
 
   // --- Google News: publisher badge ---
-  if (sourceKey === "google" || sourceKey === "google_zh") {
+  if (sourceKey === "google_zh") {
     const publisher = (item.summary || "").trim();
     if (publisher && publisher.length < 40) {
       const badge = document.createElement("span");
@@ -806,14 +820,10 @@ function buildSummaryModal() {
         <span class="summary-title" id="summary-title">${headerText}</span>
         <div class="summary-actions">
           <button class="summary-action summary-theme" type="button" aria-label="切换夜间模式" title="切换夜间模式">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>
-            </svg>
+            ${moonIcon(16)}
           </button>
           <button class="summary-close" type="button" aria-label="关闭">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M18 6L6 18M6 6l12 12"/>
-            </svg>
+            ${closeIcon()}
           </button>
         </div>
       </div>
