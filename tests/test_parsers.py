@@ -417,15 +417,15 @@ class DebugEnabledTests(unittest.TestCase):
 
 class StreamFeedTests(unittest.TestCase):
     def setUp(self):
-        import server
-        self._old_fetch_source = server.fetch_source
+        import src.parsers
+        self._old_fetch_source = src.parsers.fetch_source
 
     def tearDown(self):
-        import server
-        server.fetch_source = self._old_fetch_source
+        import src.parsers
+        src.parsers.fetch_source = self._old_fetch_source
 
     def test_stream_feed_emits_done_after_all_sources_complete(self):
-        import server
+        import src.parsers
 
         def fake_fetch_source(key):
             meta = SOURCES[key]
@@ -439,7 +439,7 @@ class StreamFeedTests(unittest.TestCase):
                 "items": [],
             }
 
-        server.fetch_source = fake_fetch_source
+        src.parsers.fetch_source = fake_fetch_source
         lines = list(stream_feed({"source": ["hn"]}))
         events = [json.loads(line) for line in lines]
         self.assertEqual(events[-1]["type"], "done")
@@ -448,13 +448,13 @@ class StreamFeedTests(unittest.TestCase):
 
 class TranslationSourceTests(unittest.TestCase):
     def setUp(self):
-        import server
-        self._old_available = server.ai_translation_available
-        server.ai_translation_available = lambda: True
+        import src.ai
+        self._old_available = src.ai.ai_translation_available
+        src.ai.ai_translation_available = lambda: True
 
     def tearDown(self):
-        import server
-        server.ai_translation_available = self._old_available
+        import src.ai
+        src.ai.ai_translation_available = self._old_available
 
     def test_chinese_sources_not_translatable(self):
         for key in ("zhihu", "google_zh", "linux_do", "linux_do_top"):
@@ -500,23 +500,23 @@ class TranslationJsonParseTests(unittest.TestCase):
 
 class TranslateItemsTests(unittest.TestCase):
     def setUp(self):
-        import server
-        self._old_available = server.ai_translation_available
-        server.ai_translation_available = lambda: True
-        self._old_call = server._call_ai_api_stream
+        import src.ai
+        self._old_available = src.ai.ai_translation_available
+        src.ai.ai_translation_available = lambda: True
+        self._old_call = src.ai._call_ai_api_stream
         # Clear translation cache so prior tests don't interfere.
-        server.TRANSLATION_CACHE._store.clear()
+        src.ai.TRANSLATION_CACHE._store.clear()
 
     def tearDown(self):
-        import server
-        server.ai_translation_available = self._old_available
-        server._call_ai_api_stream = self._old_call
-        server.TRANSLATION_CACHE._store.clear()
+        import src.ai
+        src.ai.ai_translation_available = self._old_available
+        src.ai._call_ai_api_stream = self._old_call
+        src.ai.TRANSLATION_CACHE._store.clear()
 
     def _mock_translations(self, mapping):
         """Make _call_ai_api_stream return a JSON string of *mapping*."""
-        import server
-        server._call_ai_api_stream = lambda prompt, **kw: iter([json.dumps(mapping)])
+        import src.ai
+        src.ai._call_ai_api_stream = lambda prompt, **kw: iter([json.dumps(mapping)])
 
     def test_translates_title_and_preserves_original(self):
         self._mock_translations({"0": "你好世界", "1": "简短摘要"})
@@ -536,9 +536,9 @@ class TranslateItemsTests(unittest.TestCase):
         self.assertNotIn("summaryOriginal", items[1])
 
     def test_skips_chinese_sources(self):
-        import server
+        import src.ai
         calls = []
-        server._call_ai_api_stream = lambda prompt, **kw: calls.append(prompt) or iter(["{}"])
+        src.ai._call_ai_api_stream = lambda prompt, **kw: calls.append(prompt) or iter(["{}"])
         meta = SOURCES["zhihu"]
         items = [make_item("zhihu", meta, title="知乎热榜标题", url="https://zhihu.com/q/1")]
         translate_items(items, "zhihu")
@@ -558,9 +558,9 @@ class TranslateItemsTests(unittest.TestCase):
 
     def test_skips_already_translated_items(self):
         """Items with titleOriginal are not re-sent to the AI."""
-        import server
+        import src.ai
         calls = []
-        server._call_ai_api_stream = lambda prompt, **kw: calls.append(prompt) or iter(["{}"])
+        src.ai._call_ai_api_stream = lambda prompt, **kw: calls.append(prompt) or iter(["{}"])
         meta = SOURCES["economist"]
         item = make_item("economist", meta, title="Hello", url="https://x.com/a")
         item["titleOriginal"] = "Hello"
@@ -569,8 +569,8 @@ class TranslateItemsTests(unittest.TestCase):
         self.assertEqual(calls, [])  # nothing to translate
 
     def test_ai_failure_leaves_items_unchanged(self):
-        import server
-        server._call_ai_api_stream = lambda prompt, **kw: (_ for _ in ()).throw(RuntimeError("boom"))
+        import src.ai
+        src.ai._call_ai_api_stream = lambda prompt, **kw: (_ for _ in ()).throw(RuntimeError("boom"))
         meta = SOURCES["economist"]
         items = [make_item("economist", meta, title="Hello", url="https://x.com/a")]
         translate_items(items, "economist")
@@ -578,7 +578,7 @@ class TranslateItemsTests(unittest.TestCase):
 
     def test_cache_hit_skips_ai_call(self):
         """Second call with the same texts should not hit the AI again."""
-        import server
+        import src.ai
         calls = []
         self._mock_translations({"0": "你好"})
         meta = SOURCES["economist"]
@@ -588,7 +588,7 @@ class TranslateItemsTests(unittest.TestCase):
             calls.append(prompt)
             return iter([json.dumps({"0": "你好"})])
 
-        server._call_ai_api_stream = counting_call
+        src.ai._call_ai_api_stream = counting_call
         translate_items(items, "economist")
         self.assertEqual(len(calls), 1)
 
@@ -600,7 +600,7 @@ class TranslateItemsTests(unittest.TestCase):
 
     def test_batch_fallback_on_truncated_json(self):
         """When the first batch returns unparseable JSON, retry in smaller batches."""
-        import server
+        import src.ai
         call_count = [0]
 
         def mock_call(prompt, **kw):
@@ -611,7 +611,7 @@ class TranslateItemsTests(unittest.TestCase):
                 return iter(['{"0":"第一条译文","1":"第二'])  # truncated
             return iter(['{"0":"第一条译文"}'])  # small batch succeeds
 
-        server._call_ai_api_stream = mock_call
+        src.ai._call_ai_api_stream = mock_call
         meta = SOURCES["economist"]
         # Need >10 jobs to trigger the fallback path.
         items = [
@@ -631,27 +631,27 @@ class RunTranslationJobsTests(unittest.TestCase):
     translate_items and translate_events."""
 
     def setUp(self):
-        import server
-        self._old_available = server.ai_translation_available
-        server.ai_translation_available = lambda: True
-        self._old_call = server._call_ai_api_stream
-        server.TRANSLATION_CACHE._store.clear()
+        import src.ai
+        self._old_available = src.ai.ai_translation_available
+        src.ai.ai_translation_available = lambda: True
+        self._old_call = src.ai._call_ai_api_stream
+        src.ai.TRANSLATION_CACHE._store.clear()
 
     def tearDown(self):
-        import server
-        server.ai_translation_available = self._old_available
-        server._call_ai_api_stream = self._old_call
-        server.TRANSLATION_CACHE._store.clear()
+        import src.ai
+        src.ai.ai_translation_available = self._old_available
+        src.ai._call_ai_api_stream = self._old_call
+        src.ai.TRANSLATION_CACHE._store.clear()
 
     def test_empty_jobs_returns_empty(self):
-        from server import _run_translation_jobs
+        from src.ai import _run_translation_jobs
         self.assertEqual(_run_translation_jobs([]), {})
 
     def test_cache_hit_skips_ai_call(self):
-        import server
-        from server import _run_translation_jobs
+        import src.ai
+        from src.ai import _run_translation_jobs
         calls = []
-        server._call_ai_api_stream = lambda prompt, **kw: calls.append(prompt) or iter(
+        src.ai._call_ai_api_stream = lambda prompt, **kw: calls.append(prompt) or iter(
             [json.dumps({"0": "你好"})]
         )
         jobs = [({"id": "a"}, "title", "Hello")]
@@ -662,8 +662,8 @@ class RunTranslationJobsTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
     def test_batch_fallback_on_truncated_json(self):
-        import server
-        from server import _run_translation_jobs
+        import src.ai
+        from src.ai import _run_translation_jobs
         call_count = [0]
 
         def mock_call(prompt, **kw):
@@ -672,15 +672,15 @@ class RunTranslationJobsTests(unittest.TestCase):
                 return iter(['{"0":"译文0","1":"截断'])  # truncated
             return iter(['{"0":"译文0"}'])
 
-        server._call_ai_api_stream = mock_call
+        src.ai._call_ai_api_stream = mock_call
         jobs = [({"id": str(i)}, "title", f"Title {i}") for i in range(15)]
         result = _run_translation_jobs(jobs)
         self.assertEqual(result.get("0"), "译文0")
         self.assertGreater(call_count[0], 1)
 
     def test_batch_fallback_ignores_non_numeric_keys(self):
-        import server
-        from server import _run_translation_jobs
+        import src.ai
+        from src.ai import _run_translation_jobs
         call_count = [0]
 
         def mock_call(prompt, **kw):
@@ -689,7 +689,7 @@ class RunTranslationJobsTests(unittest.TestCase):
                 return iter(["not json"])
             return iter([json.dumps({"0": "译文0", "note": "ignore me"})])
 
-        server._call_ai_api_stream = mock_call
+        src.ai._call_ai_api_stream = mock_call
         jobs = [({"id": str(i)}, "title", f"Title {i}") for i in range(15)]
         result = _run_translation_jobs(jobs)
         self.assertEqual(result.get("0"), "译文0")
@@ -724,14 +724,12 @@ class CurlFetchTests(unittest.TestCase):
     must resolve to real exception classes."""
 
     def setUp(self):
-        import server
-
-        self._orig_available = server._CURL_CFFI_AVAILABLE
+        import src.config
+        self._orig_available = src.config._CURL_CFFI_AVAILABLE
 
     def tearDown(self):
-        import server
-
-        server._CURL_CFFI_AVAILABLE = self._orig_available
+        import src.config
+        src.config._CURL_CFFI_AVAILABLE = self._orig_available
 
     # ------------------------------------------------------------------
     # _curl_fetch — success path
@@ -834,9 +832,10 @@ class CurlFetchTests(unittest.TestCase):
     def test_fetch_url_rejects_unsafe_url_with_curl_cffi(self):
         """fetch_url raises URLError for internal URLs even with curl_cffi."""
         import server
+        import src.config
         import urllib.error
 
-        server._CURL_CFFI_AVAILABLE = True
+        src.config._CURL_CFFI_AVAILABLE = True
 
         with self.assertRaises(urllib.error.URLError):
             server.fetch_url(
@@ -847,11 +846,13 @@ class CurlFetchTests(unittest.TestCase):
     def test_fetch_url_uses_urllib_when_curl_cffi_unavailable(self):
         """fetch_url falls back to urllib when _CURL_CFFI_AVAILABLE is False."""
         from unittest.mock import MagicMock, patch
+        import src.config
+        import src.fetch
         import server
 
-        server._CURL_CFFI_AVAILABLE = False
+        src.fetch._CURL_CFFI_AVAILABLE = False
 
-        with patch.object(server._SAFE_OPENER, "open") as mock_open:
+        with patch.object(src.fetch._SAFE_OPENER, "open") as mock_open:
             mock_resp = MagicMock()
             mock_resp.read.return_value = b"urllib response"
             mock_open.return_value.__enter__.return_value = mock_resp
@@ -866,11 +867,12 @@ class CurlFetchTests(unittest.TestCase):
     def test_fetch_url_uses_curl_cffi_when_available(self):
         """fetch_url uses _curl_fetch when _CURL_CFFI_AVAILABLE is True."""
         from unittest.mock import patch
+        import src.config
         import server
 
-        server._CURL_CFFI_AVAILABLE = True
+        src.config._CURL_CFFI_AVAILABLE = True
 
-        with patch("server._curl_fetch", return_value=b"curl_cffi response") as mock_cf:
+        with patch("src.fetch._curl_fetch", return_value=b"curl_cffi response") as mock_cf:
             result = server.fetch_url(
                 "https://example.com/rss",
                 "application/rss+xml",
@@ -881,11 +883,12 @@ class CurlFetchTests(unittest.TestCase):
     def test_fetch_url_passes_extra_headers(self):
         """fetch_url merges extra_headers and passes them to _curl_fetch."""
         from unittest.mock import patch
+        import src.config
         import server
 
-        server._CURL_CFFI_AVAILABLE = True
+        src.config._CURL_CFFI_AVAILABLE = True
 
-        with patch("server._curl_fetch", return_value=b"ok") as mock_cf:
+        with patch("src.fetch._curl_fetch", return_value=b"ok") as mock_cf:
             server.fetch_url(
                 "https://example.com/rss",
                 "application/rss+xml",

@@ -1093,18 +1093,15 @@ h1 {
   display: none;
 }
 
-/* RSS/Atom sources with images: slightly taller hero */
+/* RSS/Atom sources with images: slightly taller hero (desktop) */
 .story-economist .media img,
 .story-bloomberg .media img,
 .story-atlantic  .media img,
 .story-newyorker .media img,
 .story-mit_tech  .media img,
-.story-verge     .media img {
-  height: 180px;
-}
-
-.story-guardian .media img,
-.story-bbc .media img {
+.story-verge     .media img,
+.story-guardian  .media img,
+.story-bbc       .media img {
   height: 180px;
 }
 

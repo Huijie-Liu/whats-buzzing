@@ -2,6 +2,8 @@
 // core.js — State management, storage, utilities & configuration
 // =========================================================================
 
+import { toText, formatRelativeTime, isLiveTitle, escapeHtml } from './utils.js';
+
 // ---- Configuration -------------------------------------------------------
 
 export const SOURCE_GROUPS = [
@@ -124,39 +126,6 @@ export function setActiveGroup(groupKey) {
   if (!SOURCE_GROUPS.some((g) => g.key === groupKey)) return;
   state.activeGroup = groupKey;
   localStorage.setItem("activeSourceGroup", groupKey);
-}
-
-// ---- Utilities -----------------------------------------------------------
-
-export function toText(value) {
-  return String(value ?? "");
-}
-
-export function formatRelativeTime(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const diff = Date.now() - date.getTime();
-  const minutes = Math.max(0, Math.floor(diff / 60000));
-  if (minutes < 1)  return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24)   return `${hours} 小时前`;
-  const days = Math.floor(hours / 24);
-  if (days < 7)     return `${days} 天前`;
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
-  }).format(date);
-}
-
-export function isLiveTitle(title) {
-  return /^Live\b|^LIVE\b|^\[Live\]|^【直播】|直播\|/.test(title || "");
-}
-
-export function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
 }
 
 // ---- Column grouping -----------------------------------------------------

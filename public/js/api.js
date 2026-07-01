@@ -2,6 +2,7 @@
 // api.js — Network layer: feed loading & AI summary
 // =========================================================================
 
+import { streamNdjson } from './utils.js';
 import {
   state, nextItemSeq, resetItemSeq,
 } from './core.js';
@@ -20,52 +21,34 @@ export async function loadFeed() {
   try {
     const response = await fetch("/api/feed?source=all", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    if (!response.body) throw new Error("浏览器不支持流式响应");
 
-    const reader  = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-          if (event.type === "source") {
-            const prepared = (event.items || []).map((item) => {
-              item._seq = nextItemSeq();
-              return item;
-            });
-            state.items.push(...prepared);
-            state.sourceCounts.set(event.key, event.count);
-            state.loading = false;
-            loadFeed._onStateChange?.("render", { sourceKey: event.key });
-          } else if (event.type === "translate") {
-            const item = state.items.find((i) => i.id === event.itemId);
-            if (item) {
-              const field = event.field;
-              if (!item[`${field}Original`]) {
-                item[`${field}Original`] = item[field];
-              }
-              item[field] = event.translated;
-              loadFeed._onStateChange?.("translate", {
-                itemId: event.itemId,
-                field,
-              });
-            }
-          } else if (event.type === "done") {
-            loadFeed._onStateChange?.("errors", event.errors || []);
+    await streamNdjson(response, (event) => {
+      if (event.type === "source") {
+        const prepared = (event.items || []).map((item) => {
+          item._seq = nextItemSeq();
+          return item;
+        });
+        state.items.push(...prepared);
+        state.sourceCounts.set(event.key, event.count);
+        state.loading = false;
+        loadFeed._onStateChange?.("render", { sourceKey: event.key });
+      } else if (event.type === "translate") {
+        const item = state.items.find((i) => i.id === event.itemId);
+        if (item) {
+          const field = event.field;
+          if (!item[`${field}Original`]) {
+            item[`${field}Original`] = item[field];
           }
-        } catch { /* skip malformed */ }
+          item[field] = event.translated;
+          loadFeed._onStateChange?.("translate", {
+            itemId: event.itemId,
+            field,
+          });
+        }
+      } else if (event.type === "done") {
+        loadFeed._onStateChange?.("errors", event.errors || []);
       }
-
-      if (done) break;
-    }
+    });
   } catch (error) {
     loadFeed._onStateChange?.("error", error.message);
   } finally {
@@ -102,39 +85,22 @@ export async function translateVisible(sourceKey, items) {
     });
     if (!response.ok || !response.body) return;
 
-    const reader  = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-          if (event.type === "translate") {
-            const item = state.items.find((i) => i.id === event.itemId);
-            if (item) {
-              const field = event.field;
-              if (!item[`${field}Original`]) {
-                item[`${field}Original`] = item[field];
-              }
-              item[field] = event.translated;
-              loadFeed._onStateChange?.("translate", {
-                itemId: event.itemId,
-                field,
-              });
-            }
+    await streamNdjson(response, (event) => {
+      if (event.type === "translate") {
+        const item = state.items.find((i) => i.id === event.itemId);
+        if (item) {
+          const field = event.field;
+          if (!item[`${field}Original`]) {
+            item[`${field}Original`] = item[field];
           }
-        } catch { /* skip malformed */ }
+          item[field] = event.translated;
+          loadFeed._onStateChange?.("translate", {
+            itemId: event.itemId,
+            field,
+          });
+        }
       }
-
-      if (done) break;
-    }
+    });
   } catch { /* network error — silent, items stay untranslated */ }
 }
 
@@ -216,39 +182,22 @@ function runSummaryFetch() {
       }
       if (!response.body) throw new Error("浏览器不支持流式响应");
 
-      const reader  = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (reqId !== summaryReqId) return; // superseded by a newer request
-        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line);
-            if (event.type === "chunk") {
-              summaryState.text = (summaryState.text || "") + event.text;
-              onSummaryRefresh?.("modal");
-            } else if (event.type === "done") {
-              summaryState.text = event.text || summaryState.text;
-              if (event.sources) summaryState.sources = event.sources;
-              summaryState.loading = false;
-              onSummaryRefresh?.("button");
-              onSummaryRefresh?.("modal");
-            } else if (event.type === "error") {
-              summaryState.error = `总结生成失败：${event.message}`;
-              onSummaryRefresh?.("modal");
-            }
-          } catch { /* skip malformed */ }
+      await streamNdjson(response, (event) => {
+        if (reqId !== summaryReqId) return; // superseded
+        if (event.type === "chunk") {
+          summaryState.text = (summaryState.text || "") + event.text;
+          onSummaryRefresh?.("modal");
+        } else if (event.type === "done") {
+          summaryState.text = event.text || summaryState.text;
+          if (event.sources) summaryState.sources = event.sources;
+          summaryState.loading = false;
+          onSummaryRefresh?.("button");
+          onSummaryRefresh?.("modal");
+        } else if (event.type === "error") {
+          summaryState.error = `总结生成失败：${event.message}`;
+          onSummaryRefresh?.("modal");
         }
-
-        if (done) break;
-      }
+      });
 
       if (reqId !== summaryReqId) return;
       if (!summaryState.text?.trim()) {

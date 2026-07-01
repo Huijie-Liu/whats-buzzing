@@ -2,9 +2,9 @@
 // ui.js — DOM rendering, keyboard navigation, modals & interaction
 // =========================================================================
 
+import { $, $$, toText, formatRelativeTime, isLiveTitle, escapeHtml } from './utils.js';
 import {
   state, SOURCES, SOURCE_GROUPS,
-  toText, formatRelativeTime, isLiveTitle, escapeHtml,
   activeGroupSources, sourceCount, setActiveGroup,
   findItemById, markRead,
   groupColumns, displayedItems,
@@ -23,9 +23,6 @@ import {
 // =========================================================================
 // DOM references (lazy — resolved after DOM ready)
 // =========================================================================
-
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => [...document.querySelectorAll(sel)];
 
 let els = {};
 function cacheElements() {
@@ -203,18 +200,19 @@ function tryMarkRead(item, node) {
   }
 }
 
-function buildSourceFeatures(node, item, sourceKey, mainUrl, links) {
-  // --- HN: points + comments badges ---
-  if (sourceKey === "hn") {
+// Registry: source-specific card features.  Each function receives
+// (item, cardNode, linksContainer).  Add an entry here when creating a
+// source that needs custom badges or layout.
+const SOURCE_FEATURES = {
+  hn(item, node, links) {
     const statsEl = document.createElement("div");
     statsEl.className = "card-stats";
-
     const badgeGroup = document.createElement("span");
     badgeGroup.className = "hn-badges";
 
     const score    = Number.isFinite(Number(item.score))    ? Number(item.score)    : null;
     const comments = Number.isFinite(Number(item.comments)) ? Number(item.comments) : null;
-    const discUrl  = item.discussionUrl || mainUrl;
+    const discUrl  = item.discussionUrl || item.url || "#";
 
     if (score !== null) {
       const pts = document.createElement("span");
@@ -232,18 +230,12 @@ function buildSourceFeatures(node, item, sourceKey, mainUrl, links) {
       comm.addEventListener("click", () => tryMarkRead(item, node));
       badgeGroup.appendChild(comm);
     }
+    if (badgeGroup.children.length) statsEl.appendChild(badgeGroup);
+    if (statsEl.children.length) links.insertAdjacentElement("beforebegin", statsEl);
+  },
 
-    if (badgeGroup.children.length) {
-      statsEl.appendChild(badgeGroup);
-    }
-
-    if (statsEl.children.length) {
-      links.insertAdjacentElement("beforebegin", statsEl);
-    }
-  }
-
-  // --- Zhihu: heat badge ---
-  if (sourceKey === "zhihu" && item.score > 0) {
+  zhihu(item, node, links) {
+    if (!item.score || item.score <= 0) return;
     const statsEl = document.createElement("div");
     statsEl.className = "card-stats";
     const heat = document.createElement("span");
@@ -254,10 +246,9 @@ function buildSourceFeatures(node, item, sourceKey, mainUrl, links) {
     heat.textContent = `🔥 ${heatStr}`;
     statsEl.appendChild(heat);
     links.insertAdjacentElement("beforebegin", statsEl);
-  }
+  },
 
-  // --- Google News: publisher badge ---
-  if (sourceKey === "google_zh") {
+  google_zh(item, node, links) {
     const publisher = (item.summary || "").trim();
     if (publisher && publisher.length < 40) {
       const badge = document.createElement("span");
@@ -265,7 +256,12 @@ function buildSourceFeatures(node, item, sourceKey, mainUrl, links) {
       badge.textContent = publisher;
       links.appendChild(badge);
     }
-  }
+  },
+};
+
+function buildSourceFeatures(node, item, sourceKey, mainUrl, links) {
+  const builder = SOURCE_FEATURES[sourceKey];
+  if (builder) builder(item, node, links);
 }
 
 // =========================================================================
