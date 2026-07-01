@@ -141,7 +141,7 @@ h1 {
 
 .title {
   display: block;
-  margin: 2px 0 0;
+  margin: 4px 0 0;
   color: var(--ink);
   font-family: var(--font-display);
   font-size: 19px;
@@ -238,7 +238,7 @@ h1 {
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 10px clamp(10px, 2vw, 24px);
+    padding: 12px clamp(8px, 2vw, 24px);
   }
 
 }
@@ -289,7 +289,7 @@ h1 {
   min-height: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  padding-bottom: 10px;
+  padding-bottom: 8px;
   scroll-snap-type: x proximity;
   overscroll-behavior-x: contain;
   justify-content: safe center;
@@ -580,7 +580,7 @@ h1 {
 .publisher-badge {
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
+  padding: 4px 8px;
   margin-left: auto;
   border-radius: var(--radius-sm);
   background: var(--soft);
@@ -669,7 +669,7 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: 6px;
+  margin-left: 8px;
   padding: 0 4px;
   height: 17px;
   border-radius: var(--radius-sm);
@@ -885,7 +885,7 @@ h1 {
 }
 
 .summary-skeleton {
-  margin-top: 18px;
+  margin-top: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -926,7 +926,7 @@ h1 {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
-  padding-bottom: 14px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -974,7 +974,7 @@ h1 {
 
   li {
     position: relative;
-    padding-left: 2px;
+    padding-left: 4px;
     margin-bottom: 4px;
     color: var(--summary-ink);
     line-height: 1.65;
@@ -1026,7 +1026,7 @@ h1 {
 
 .notice {
   flex: 0 0 auto;
-  margin: 0 0 14px;
+  margin: 0 0 12px;
   padding: 12px 12px;
   border: 1px solid var(--notice-border);
   border-radius: var(--radius-md);
@@ -1065,7 +1065,7 @@ h1 {
 }
 
 .kbd-title {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   color: var(--ink);
   font-size: 14px;
   font-weight: 700;
@@ -1169,7 +1169,7 @@ h1 {
 
 /* HN: compact text cards by default; images shown when lazy-loaded */
 .story-hn {
-  .story-body  { padding: 10px 14px; }
+  .story-body  { padding: 8px 12px; }
   .links       { margin-top: 4px; }
   .summary     { display: none; }
 
@@ -1185,12 +1185,12 @@ h1 {
 
     img { height: 150px; }
   }
-  .story-body { padding-top: 10px; padding-bottom: 12px; }
+  .story-body { padding-top: 8px; padding-bottom: 12px; }
 }
 
 /* Zhihu: hot-list vibe, heat badge, compact */
 .story-zhihu {
-  .story-body { padding: 10px 14px; }
+  .story-body { padding: 8px 12px; }
   time        { display: none; }
 
   .card-stats {
@@ -1210,7 +1210,7 @@ h1 {
 .story-hupu_nba,
 .story-hupu_soccer,
 .story-hupu_lol {
-  .story-body { padding: 10px 14px; }
+  .story-body { padding: 8px 12px; }
   .links      { margin-top: 4px; }
   .summary    { display: none; }
 
@@ -1233,7 +1233,7 @@ h1 {
 /* Reuters: larger hero image, no summary */
 .story-reuters {
   .media img  { height: 210px; }
-  .story-body { padding: 10px 14px; }
+  .story-body { padding: 8px 12px; }
   .summary    { display: none; }
 }
 
@@ -1264,7 +1264,7 @@ h1 {
 @media (max-width: 820px) {
   .topbar-body {
     flex-wrap: wrap;
-    gap: 8px 10px;
+    gap: 8px;
     padding: 8px 12px;
   }
 
@@ -1301,8 +1301,8 @@ h1 {
 /* ---- Phone: full-width columns, maximum information density ---- */
 @media (max-width: 540px) {
   .topbar-body {
-    padding: 4px 4px;
-    gap: 4px 4px;
+    padding: 8px 8px;
+    gap: 8px;
   }
 
   .brand {
@@ -1338,7 +1338,7 @@ h1 {
 
   .category-tab {
     height: 32px;
-    padding: 0 10px;
+    padding: 0 8px;
     font-size: 13px;
     gap: 4px;
     min-width: 0;
@@ -1357,16 +1357,16 @@ h1 {
   /* Minimal shell margin */
   .shell {
     width: 100%;
-    margin-top: 4px;
+    margin-top: 8px;
   }
 
   /* Columns fill nearly the full viewport width */
   .feed {
     gap: 4px;
     scroll-snap-type: x mandatory;
-    scroll-padding: 0 2px;
-    padding-left: 2px;
-    padding-right: 2px;
+    scroll-padding: 0 4px;
+    padding-left: 4px;
+    padding-right: 4px;
     padding-bottom: 8px;
   }
 
@@ -1394,13 +1394,13 @@ h1 {
 
   /* Tighter card body */
   .story-body {
-    padding: 8px 10px;
+    padding: 8px 12px;
   }
 
   .title {
     font-size: 17px;
     line-height: 1.32;
-    margin-top: 1px;
+    margin-top: 0;
   }
 
   .summary {
@@ -1440,38 +1440,20 @@ h1 {
   }
 
   /* Source-specific mobile tweaks */
-  .story-hn .story-body {
-    padding: 8px 12px;
-  }
-
   .story-hn .links {
     margin-top: 4px;
   }
 
-  .story-zhihu .story-body {
-    padding: 8px 12px;
-  }
-
-  .story-reuters .story-body {
-    padding: 8px 12px;
-  }
-
-  .story-hupu_nba .story-body,
-  .story-hupu_soccer .story-body,
-  .story-hupu_lol .story-body {
-    padding: 8px 12px;
-  }
-
   /* Tighter badges */
   .stat-badge {
-    padding: 1px 6px;
+    padding: 4px 8px;
     font-size: 12px;
   }
 
   .live-badge {
     height: 15px;
     font-size: 10px;
-    margin-left: 3px;
+    margin-left: 4px;
   }
 
   .publisher-badge {
@@ -1491,8 +1473,8 @@ h1 {
 
   /* Notice */
   .notice {
-    margin: 0 0 6px;
-    padding: 8px 10px;
+    margin: 0 0 8px;
+    padding: 8px 12px;
     font-size: 14px;
   }
 
@@ -1522,7 +1504,7 @@ h1 {
   }
 
   .summary-card-body {
-    padding: 14px;
+    padding: 16px;
   }
 
   .summary-text {
@@ -1531,14 +1513,14 @@ h1 {
   }
 
   .summary-section {
-    margin-bottom: 14px;
+    margin-bottom: 16px;
 
     strong { font-size: 14px; }
 
     li {
       font-size: 12px;
       line-height: 1.55;
-      margin-bottom: 3px;
+      margin-bottom: 4px;
     }
   }
 }
