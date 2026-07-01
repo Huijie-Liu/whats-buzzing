@@ -1227,7 +1227,7 @@ function toggleHelp() {
     ["Enter", "打开选中文章"], ["1 - 5", "热点 / 综合 / 财经 / 科技 / 体育"],
     ["[ / ]", "上一组 / 下一组"], ["d / u", "本列向下 / 向上半页"],
     ["g g / G", "本列顶部 / 底部"], ["/", "搜索文章"],
-    ["t", "明暗主题"], ["r", "刷新"],
+    ["t", "明暗主题"], ["r", "刷新"], ["s", "AI 总结"],
     ["Esc", "取消选中 / 关闭"], ["?", "显示 / 隐藏帮助"],
   ];
   const overlay = document.createElement("div");
@@ -1315,6 +1315,7 @@ function handleVimKey(e) {
       }
       break;
     case "r": e.preventDefault(); loadFeed(); break;
+    case "s": e.preventDefault(); onSummaryClick(); break;
     case "t": e.preventDefault(); setTheme(state.theme === "dark" ? "light" : "dark"); break;
     case "1": e.preventDefault(); if (state.activeGroup !== "hot") switchGroupWithState("hot"); break;
     case "2": e.preventDefault(); if (state.activeGroup !== "general") switchGroupWithState("general"); break;
