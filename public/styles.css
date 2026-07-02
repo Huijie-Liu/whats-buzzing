@@ -1237,6 +1237,9 @@ h1 {
     flex-basis: 100%;
   }
 
+  /* Shell goes full-width on mobile (columns handle their own margins) */
+  .shell { width: 100%; }
+
   /* Columns fill viewport with snap */
   .feed {
     scroll-snap-type: x mandatory;
