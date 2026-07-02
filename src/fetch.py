@@ -33,8 +33,6 @@ OG_IMAGE_RE = re.compile(
 )
 P_TAG_RE = re.compile(r"<p[^>]*>(.+?)</p>", re.DOTALL | re.IGNORECASE)
 TITLE_RE = re.compile(r"<title[^>]*>(.+?)</title>", re.DOTALL | re.IGNORECASE)
-BODY_TEXT_RE = re.compile(r"<body[^>]*>(.*?)</body>", re.DOTALL | re.IGNORECASE)
-
 # Strip-tags regex (duplicated from parsers to avoid circular import)
 _TAG_RE = re.compile(r"<[^>]+>")
 

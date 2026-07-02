@@ -45,7 +45,7 @@ from src.parsers.custom import (
 )
 
 from src.fetch import (
-    META_DESC_RE, OG_IMAGE_RE, P_TAG_RE, TITLE_RE, BODY_TEXT_RE,
+    META_DESC_RE, OG_IMAGE_RE, P_TAG_RE, TITLE_RE,
     PREVIEW_CACHE_TTL, IMAGE_CACHE_TTL, PREVIEW_MAX_BYTES,
     PREVIEW_CACHE, IMAGE_CACHE,
     _curl_fetch, fetch_url, read_limited,

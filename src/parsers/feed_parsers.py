@@ -7,13 +7,11 @@ import urllib.error
 import xml.etree.ElementTree as ET
 
 from src.config import (
-    SOURCES, NS, USER_AGENT,
-    _CURL_CFFI_AVAILABLE, curl_cffi, CurlFollow,
+    SOURCES, NS, USER_AGENT, _CURL_CFFI_AVAILABLE,
 )
 from src.fetch import _curl_fetch
 from src.parsers import (
-    child_text, clean_html, make_item,
-    normalize_date, source_payload,
+    child_text, clean_html, make_item, normalize_date,
 )
 
 LOCALIZED_REUTERS_PREFIXES = ("/es/", "/de/", "/fr/", "/pt/", "/ja/", "/zh-hans/")
