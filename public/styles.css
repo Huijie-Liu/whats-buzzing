@@ -1237,20 +1237,19 @@ h1 {
     flex-basis: 100%;
   }
 
-  /* Shell goes full-width on mobile (columns handle their own margins) */
-  .shell { width: 100%; }
+  /* Shell keeps a subtle breathing room */
+  .shell { width: calc(100% - var(--space-sm) * 2); }
 
-  /* Columns fill viewport with snap */
+  /* Columns fill shell with snap */
   .feed {
     scroll-snap-type: x mandatory;
     scroll-padding: 0 var(--space-2xs);
-    padding-left: var(--space-2xs);
-    padding-right: var(--space-2xs);
+    padding: 0;
   }
 
   .column {
-    flex: 0 0 calc(100vw - var(--space-xs));
-    max-width: calc(100vw - var(--space-xs));
+    flex: 0 0 100%;
+    max-width: 100%;
     scroll-snap-align: center;
   }
 
